@@ -26,6 +26,128 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+from typing import List
+import ast
+import inspect
+
+def is_action_blocked(node):
+    """
+    Checks if the given Abstract Syntax Tree (AST) node corresponds to a blocked action.
+
+    Args:
+        node (ast.AST): The AST node to check.
+
+    Returns:
+        bool: True if the AST node corresponds to a blocked action 
+        (e.g., calling 'Delete' or 'add' on an object), False otherwise.
+    """
+
+    BLOCKED_ACTIONS = ["Delete", "Add", "SetBinContent", "AddBinContent", "Reset"]
+
+    # Checking if this node is a function
+    if isinstance(node, ast.Call):
+        # Checking if we're calling an attribute of an object
+        if isinstance(node.func, ast.Attribute):
+            func_name = node.func.attr
+            if func_name in BLOCKED_ACTIONS:
+                return True
+    return False
+
+
+def is_callback_safe(callback):
+    """
+    Checks if the provided callback function is safe for live visualization, 
+    meaning it does not contain blocked actions.
+
+    Args:
+        callback (function): The callback function to check.
+
+    Returns:
+        bool: True if the callback function is safe (does not contain blocked actions), False otherwise.
+    """
+
+    # Get the source code of the callback function
+    callback_source = inspect.getsource(callback)
+
+    # Parse the callback function's source code
+    callback_source_ast = ast.parse(callback_source)
+
+    for node in ast.walk(callback_source_ast):
+        if is_action_blocked(node):
+            return False
+    return True
+
+
+def is_valid_histogram(obj):
+    """
+    Checks if the object is a valid TH1 histogram.
+
+    Args:
+        obj: The object to be checked.
+
+    Returns:
+        bool: True if the object is a valid TH1 histogram, False otherwise.
+    """
+    import ROOT
+
+    try:
+        return isinstance(obj.GetValue(), ROOT.TH1)
+    except:
+        return False
+
+    # TODO figure out this part..
+    '''
+    if isinstance(obj, ROOT.RResultPtr):
+        obj = obj.GetValue()
+    '''
+
+def live_visualize(histograms: List, callback=None) -> None:
+    """
+    Enables live visualization for the given histograms by setting the
+    live_visualization_enabled flag of the Headnode to True.
+
+    Args:
+        histograms (List[ROOT.TH1D]): The list of histograms to enable live visualization for.
+    """
+    import ROOT
+    from DistRDF import HeadNode
+
+    valid_arg = True
+
+    # TODO figure out how to check the type of the histograms without triggering the computation graph with .GetValue()
+    '''
+    for hist in histograms:
+        valid_arg = is_valid_histogram(hist)
+        print(valid_arg)
+    '''
+
+
+    if valid_arg:
+        headnode = histograms[0].proxied_node.get_head() # Assuming all passed histograms share the same headnode
+        headnode.live_visualization_enabled = True
+        headnode.histogram_ids = [histogram.proxied_node.node_id for histogram in histograms]
+
+        if callback:
+            if callable(callback):
+                if len(inspect.signature(callback).parameters) == 1:
+                    if is_callback_safe(callback):
+                        headnode.live_visualization_callback = callback
+                    else:
+                        print("\033[1;31mWarning: The provided callback function contains blocked actions. Skipping callback.\033[0m")
+                else:
+                    print("\033[1;31mWarning: The callback function should have exactly one parameter. Skipping callback.\033[0m")
+            else:
+                print("\033[1;31mWarning: The provided callback is not callable. Skipping callback.\033[0m")
+
+    else:
+        print("\033[1;31mWarning: All elements in the 'histograms' list must be valid ROOT.TH1D histograms. Skipping live visualization.\033[0m")
+
+            
+'''
+if len(callback.__code__.co_varnames) == 1:
+if len(inspect.signature(callback).parameters) != 1:
+'''
+
 
 def initialize(fun, *args, **kwargs):
     """

@@ -36,7 +36,7 @@ except ImportError:
 if TYPE_CHECKING:
     from dask_jobqueue import JobQueueCluster
 
-
+'''
 def live_visualize(histograms: List[ROOT.TH1D]) -> None:
     """
     Enables live visualization for the given histograms by setting the
@@ -48,7 +48,7 @@ def live_visualize(histograms: List[ROOT.TH1D]) -> None:
     headnode = histograms[0].proxied_node.get_head()
     headnode.live_visualization_enabled = True
     headnode.histogram_ids = [histogram.proxied_node.node_id for histogram in histograms]
-
+'''
 
 def get_total_cores_generic(client: Client) -> int:
     """
@@ -133,7 +133,7 @@ class DaskBackend(Base.BaseBackend):
         return get_total_cores(self.client)
 
 
-    def ProcessAndMerge(self, ranges, mapper, reducer, live_visualization_enabled, histogram_ids, local_nodes):
+    def ProcessAndMerge(self, ranges, mapper, reducer, live_visualization_enabled, histogram_ids, local_nodes, callback):
         """
         Performs map-reduce using Dask framework.
 
@@ -243,10 +243,15 @@ class DaskBackend(Base.BaseBackend):
                         else:
                             cumulative_histograms[i].Add(h)
 
-                        cumulative_histograms[i].SetFillColor(random.randint(1, 9))
+                        #cumulative_histograms[i].SetFillColor(random.randint(1, 9))
 
                         # Move to the appropriate pad
+                        # If I move to the right pad after calling the fit it breaks
                         pad = c.cd(pad_num)
+
+                        if callback:
+                            callback(cumulative_histograms[i])
+
                         cumulative_histograms[i].Draw()
                         
                         # Update the pad
