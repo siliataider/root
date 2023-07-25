@@ -29,6 +29,7 @@
 #include <TClassEdit.h>
 #include <TCollection.h>
 #include <TDataMember.h>
+#include <TEnum.h>
 #include <TError.h>
 #include <TList.h>
 #include <TObjArray.h>
@@ -366,6 +367,13 @@ ROOT::Experimental::Detail::RFieldBase::Create(const std::string &fieldName, con
          result = std::make_unique<RField<RNTupleCardinality<std::uint64_t>>>(fieldName);
       } else {
          return R__FAIL(std::string("Field ") + fieldName + " has invalid cardinality template: " + canonicalType);
+      }
+   }
+
+   if (!result) {
+      auto e = TEnum::GetEnum(canonicalType.c_str());
+      if (e != nullptr) {
+         result = std::make_unique<REnumField>(fieldName, canonicalType);
       }
    }
 
@@ -1314,6 +1322,65 @@ std::uint32_t ROOT::Experimental::RClassField::GetTypeVersion() const
 void ROOT::Experimental::RClassField::AcceptVisitor(Detail::RFieldVisitor &visitor) const
 {
    visitor.VisitClassField(*this);
+}
+
+//------------------------------------------------------------------------------
+
+ROOT::Experimental::REnumField::REnumField(std::string_view fieldName, std::string_view enumName)
+   : REnumField(fieldName, enumName, TEnum::GetEnum(std::string(enumName).c_str()))
+{
+}
+
+ROOT::Experimental::REnumField::REnumField(std::string_view fieldName, std::string_view enumName, TEnum *enump)
+   : ROOT::Experimental::Detail::RFieldBase(fieldName, enumName, ENTupleStructure::kLeaf, false /* isSimple */)
+{
+   if (enump == nullptr) {
+      throw RException(R__FAIL("RField: no I/O support for enum type " + std::string(enumName)));
+   }
+   // Avoid accidentally supporting std types through TEnum.
+   if (enump->Property() & kIsDefinedInStd) {
+      throw RException(R__FAIL(std::string(enumName) + " is not supported"));
+   }
+
+   switch (enump->GetUnderlyingType()) {
+   case kChar_t: Attach(std::make_unique<RField<int8_t>>("_0")); break;
+   case kUChar_t: Attach(std::make_unique<RField<uint8_t>>("_0")); break;
+   case kShort_t: Attach(std::make_unique<RField<int16_t>>("_0")); break;
+   case kUShort_t: Attach(std::make_unique<RField<uint16_t>>("_0")); break;
+   case kInt_t: Attach(std::make_unique<RField<int32_t>>("_0")); break;
+   case kUInt_t: Attach(std::make_unique<RField<uint32_t>>("_0")); break;
+   case kLong_t:
+   case kLong64_t: Attach(std::make_unique<RField<int64_t>>("_0")); break;
+   case kULong_t:
+   case kULong64_t: Attach(std::make_unique<RField<uint64_t>>("_0")); break;
+   default: throw RException(R__FAIL("Unsupported underlying integral type for enum type " + std::string(enumName)));
+   }
+
+   fTraits |= kTraitTriviallyConstructible | kTraitTriviallyDestructible;
+}
+
+std::unique_ptr<ROOT::Experimental::Detail::RFieldBase>
+ROOT::Experimental::REnumField::CloneImpl(std::string_view newName) const
+{
+   return std::unique_ptr<REnumField>(new REnumField(newName, GetType()));
+}
+
+ROOT::Experimental::Detail::RFieldValue ROOT::Experimental::REnumField::GenerateValue(void *where)
+{
+   auto underlyingValue = fSubFields[0]->GenerateValue(where);
+   return Detail::RFieldValue(true /* captureTag */, this, underlyingValue.GetRawPtr());
+}
+
+std::vector<ROOT::Experimental::Detail::RFieldValue>
+ROOT::Experimental::REnumField::SplitValue(const Detail::RFieldValue &value) const
+{
+   auto result = Detail::RFieldValue(true /* captureTag */, fSubFields[0].get(), value.GetRawPtr());
+   return std::vector<Detail::RFieldValue>{result};
+}
+
+void ROOT::Experimental::REnumField::AcceptVisitor(Detail::RFieldVisitor &visitor) const
+{
+   visitor.VisitEnumField(*this);
 }
 
 //------------------------------------------------------------------------------

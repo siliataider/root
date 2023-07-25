@@ -11,7 +11,7 @@ let version_id = 'dev';
 
 /** @summary version date
   * @desc Release date in format day/month/year like '14/04/2022' */
-let version_date = '18/07/2023';
+let version_date = '19/07/2023';
 
 /** @summary version id and date
   * @desc Produced by concatenation of {@link version_id} and {@link version_date}
@@ -8440,7 +8440,7 @@ class BasePainter {
          enlarge = select(document.body)
             .append('div')
             .attr('id', 'jsroot_enlarge_div')
-            .attr('style', 'position: fixed; margin: 0px; border: 0px; padding: 0px; left: 1px; right: 1px; top: 1px; bottom: 1px; background: white; opacity: 0.95; z-index: 100; overflow: hidden;');
+            .attr('style', 'position: fixed; margin: 0px; border: 0px; padding: 0px; inset: 1px; background: white; opacity: 0.95; z-index: 100; overflow: hidden;');
 
          let rect1 = getElementRect(main),
              rect2 = getElementRect(enlarge);
@@ -59264,7 +59264,7 @@ class StandaloneMenu extends JSRootMenu {
           block = select('body').append('div')
                                    .attr('id', `${dlg_id}_block`)
                                    .attr('class', 'jsroot_dialog_block')
-                                   .attr('style', 'z-index: 100000; position: absolute; top: 0; left: 0; right: 0; bottom: 0; opacity: 0.2; background-color: white'),
+                                   .attr('style', 'z-index: 100000; position: absolute; inset: 0px; opacity: 0.2; background-color: white'),
           element = select('body')
                       .append('div')
                       .attr('id', dlg_id)
@@ -64286,7 +64286,7 @@ class TabsDisplay extends MDIDisplay {
       let draw_frame = main.append('div')
                            .attr('frame_title', title)
                            .attr('class', 'jsroot_tabs_draw')
-                           .attr('style', `overflow: hidden; position: absolute; top: 0px; bottom: 0px; left: 0px; right: 0px`)
+                           .attr('style', `overflow: hidden; position: absolute; inset: 0px`)
                            .property('frame_id', frame_id);
 
       this.modifyTabsFrame(frame_id, 'activate');
@@ -64847,8 +64847,8 @@ class BrowserLayout {
           input_style = settings.DarkMode ? `background-color: #222; color: ${text_color}` : '';
 
       injectStyle(
-         `.jsroot_browser { pointer-events: none; position: absolute; left: 0; top: 0; bottom: 0; right:0; margin: 0; border: 0; overflow: hidden; }`+
-         `.jsroot_draw_area { background-color: ${bkgr_color}; overflow: hidden; margin: 0; border: 0; }`+
+         `.jsroot_browser { pointer-events: none; position: absolute; inset: 0px; margin: 0px; border: 0px; overflow: hidden; }`+
+         `.jsroot_draw_area { background-color: ${bkgr_color}; overflow: hidden; margin: 0px; border: 0px; }`+
          `.jsroot_browser_area { color: ${text_color}; background-color: ${bkgr_color}; font-size: 12px; font-family: Verdana; pointer-events: all; box-sizing: initial; }`+
          `.jsroot_browser_area input { ${input_style} }`+
          `.jsroot_browser_area select { ${input_style} }`+
@@ -67981,36 +67981,44 @@ class TCanvasPainter extends TPadPainter {
              hist = parse(msg.slice(7));
          this.websocketTimeout(`proj${kind}`, 'reset');
          this.drawProjection(kind, hist);
-      } else if (msg.slice(0,5) == 'SHOW:') {
-         let that = msg.slice(5),
-             on = (that[that.length-1] == '1');
-         this.showSection(that.slice(0,that.length-2), on);
       } else if (msg.slice(0,5) == 'CTRL:') {
-         let obj = parse(msg.slice(5)), resized = false;
-         if ((obj?.title !== undefined) && (typeof document !== 'undefined'))
-            document.title = obj.title;
-         if (obj.x && obj.y && typeof window !== 'undefined') {
-            window.moveTo(obj.x, obj.y);
+         let ctrl = parse(msg.slice(5)), resized = false;
+         if ((ctrl?.title !== undefined) && (typeof document !== 'undefined'))
+            document.title = ctrl.title;
+         if (ctrl.x && ctrl.y && typeof window !== 'undefined') {
+            window.moveTo(ctrl.x, ctrl.y);
             resized = true;
          }
-         if (obj.w && obj.h) {
-            this.resizeBrowser(Number.parseInt(obj.w), Number.parseInt(obj.h));
+         if (ctrl.w && ctrl.h) {
+            this.resizeBrowser(Number.parseInt(ctrl.w), Number.parseInt(ctrl.h));
             resized = true;
          }
-         if (obj.cw && obj.ch && obj.fixed_size && isFunc(this.setFixedCanvasSize)) {
-            this._online_fixed_size = this.setFixedCanvasSize(Number.parseInt(obj.cw), Number.parseInt(obj.ch), true);
+         if (ctrl.cw && ctrl.ch && isFunc(this.setFixedCanvasSize)) {
+            this._online_fixed_size = this.setFixedCanvasSize(Number.parseInt(ctrl.cw), Number.parseInt(ctrl.ch), true);
             resized = true;
+         }
+         let kinds = ['Menu', 'StatusBar', 'Editor', 'ToolBar', 'ToolTips'];
+         kinds.forEach(kind => {
+            if (ctrl[kind] !== undefined)
+               this.showSection(kind, ctrl[kind] == '1');
+         });
+
+         if (ctrl.edit) {
+            let obj_painter = this.findSnap(ctrl.edit);
+            if (obj_painter)
+               this.showSection('Editor', true)
+                   .then(() => this.producePadEvent('select', obj_painter.getPadPainter(), obj_painter));
+         }
+
+         if (ctrl.winstate && typeof window !== 'undefined') {
+            if (ctrl.winstate == 'iconify')
+               window.blur();
+            else
+               window.focus();
          }
 
          if (resized)
             this.sendResized(true);
-      } else if (msg.slice(0,5) == 'EDIT:') {
-         let obj_painter = this.findSnap(msg.slice(5));
-         console.log(`GET EDIT ${msg.slice(5)} found ${!!obj_painter}`);
-         if (obj_painter)
-            this.showSection('Editor', true)
-                .then(() => this.producePadEvent('select', obj_painter.getPadPainter(), obj_painter));
-
       } else {
          console.log(`unrecognized msg ${msg}`);
       }
@@ -68019,7 +68027,7 @@ class TCanvasPainter extends TPadPainter {
    /** @summary Send RESIZED message to client to inform about changes in canvas/window geometry
      * @private */
    sendResized(force) {
-      if (!this.pad)
+      if (!this.pad || (typeof window === 'undefined'))
          return;
       let cw = this.getPadWidth(), ch = this.getPadHeight(),
           wx = window.screenLeft, wy = window.screenTop,
@@ -68291,7 +68299,7 @@ class TCanvasPainter extends TPadPainter {
       }
 
       if (msg) {
-         console.log(`Sending ${msg.length} ${msg.slice(0,40)}`);
+         // console.log(`Sending ${msg.length} ${msg.slice(0,40)}`);
          this._websocket.send(msg);
       } else {
          console.log(`Unprocessed changes ${kind} for painter of ${painter?.getObject()?._typename} subelem ${subelem}`);
@@ -104671,7 +104679,7 @@ function drawJSImage(dom, obj, opt) {
       img.style('width','100%').style('height','100%');
    } else if (opt && opt.indexOf('center') >= 0) {
       main.style('position', 'relative');
-      img.attr('style', 'margin: 0; position: absolute;  top: 50%; left: 50%; transform: translate(-50%, -50%);');
+      img.attr('style', 'margin: 0; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);');
    }
 
    painter.setTopPainter();

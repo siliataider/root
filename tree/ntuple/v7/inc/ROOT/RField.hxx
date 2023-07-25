@@ -45,6 +45,7 @@
 #include <utility>
 
 class TClass;
+class TEnum;
 
 namespace ROOT {
 
@@ -472,6 +473,36 @@ public:
    void AcceptVisitor(Detail::RFieldVisitor &visitor) const override;
 };
 
+/// The field for an unscoped or scoped enum with dictionary
+class REnumField : public Detail::RFieldBase {
+private:
+   REnumField(std::string_view fieldName, std::string_view enumName, TEnum *enump);
+
+protected:
+   std::unique_ptr<Detail::RFieldBase> CloneImpl(std::string_view newName) const final;
+   void GenerateColumnsImpl() final {}
+   void GenerateColumnsImpl(const RNTupleDescriptor & /* desc */) final {}
+   std::size_t AppendImpl(const void *from) final { return fSubFields[0]->Append(from); }
+   void ReadGlobalImpl(NTupleSize_t globalIndex, void *to) final { fSubFields[0]->Read(globalIndex, to); }
+
+public:
+   REnumField(std::string_view fieldName, std::string_view enumName);
+   REnumField(REnumField &&other) = default;
+   REnumField &operator=(REnumField &&other) = default;
+   ~REnumField() override = default;
+
+   using Detail::RFieldBase::GenerateValue;
+   Detail::RFieldValue GenerateValue(void *where) final;
+   Detail::RFieldValue CaptureValue(void *where) final
+   {
+      return Detail::RFieldValue(true /* captureTag */, this, where);
+   }
+   std::vector<Detail::RFieldValue> SplitValue(const Detail::RFieldValue &value) const final;
+   size_t GetValueSize() const final { return fSubFields[0]->GetValueSize(); }
+   size_t GetAlignment() const final { return fSubFields[0]->GetAlignment(); }
+   void AcceptVisitor(Detail::RFieldVisitor &visitor) const final;
+};
+
 /// The field for a class representing a collection of elements via `TVirtualCollectionProxy`.
 /// Objects of such type behave as collections that can be accessed through the corresponding member functions in
 /// `TVirtualCollectionProxy`. At a bare minimum, the user is required to provide an implementation for the following
@@ -502,7 +533,9 @@ private:
          void Advance()
          {
             auto fnNext_Contig = [&]() {
-               auto &iter = *static_cast<unsigned char **>(fIterator), p = iter;
+               // Array-backed collections (e.g. kSTLvector) directly use the pointer-to-iterator-data as a
+               // pointer-to-element, thus saving an indirection level (see documentation for TVirtualCollectionProxy)
+               auto &iter = reinterpret_cast<unsigned char *&>(fIterator), p = iter;
                iter += fOwner.fStride;
                return p;
             };
@@ -915,7 +948,7 @@ class RField : public RClassField {
 public:
    static std::string TypeName() { return ROOT::Internal::GetDemangledTypeName(typeid(T)); }
    RField(std::string_view name) : RClassField(name, TypeName()) {
-      static_assert(std::is_class<T>::value, "no I/O support for this basic C++ type");
+      static_assert(std::is_class_v<T>, "no I/O support for this basic C++ type");
    }
    RField(RField &&other) = default;
    RField &operator=(RField &&other) = default;
@@ -935,6 +968,23 @@ public:
          // If there is no default constructor, try with the IO constructor
          return GenerateValue(where, T(static_cast<TRootIOCtor *>(nullptr)));
       }
+   }
+};
+
+template <typename T>
+class RField<T, typename std::enable_if<std::is_enum_v<T>>::type> : public REnumField {
+public:
+   static std::string TypeName() { return ROOT::Internal::GetDemangledTypeName(typeid(T)); }
+   RField(std::string_view name) : REnumField(name, TypeName()) {}
+   RField(RField &&other) = default;
+   RField &operator=(RField &&other) = default;
+   ~RField() override = default;
+
+   using Detail::RFieldBase::GenerateValue;
+   template <typename... ArgsT>
+   ROOT::Experimental::Detail::RFieldValue GenerateValue(void *where, ArgsT &&...args)
+   {
+      return Detail::RFieldValue(this, static_cast<T *>(where), std::forward<ArgsT>(args)...);
    }
 };
 
