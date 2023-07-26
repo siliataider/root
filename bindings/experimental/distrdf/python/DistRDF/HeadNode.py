@@ -109,11 +109,13 @@ class HeadNode(Node, ABC):
         self.live_visualization_enabled: bool = False
 
         # ID(s) of the histogram(s) to live visualize
-        #self.histogram_id: int = 0
-        self.histogram_ids: List[int] = []
+        #self.histogram_ids: List[int] = []
 
         # User-defined callback function for live visualization
-        self.live_visualization_callback: Optional[Callable] = None
+        #self.live_visualization_callback: Optional[Callable] = None
+
+        # A dictionary where the keys are the histograms and the values are the corresponding callback functions 
+        self.histogram_id_callback_dict: Dict[int, Optional[Callable]] = {}
 
     @property
     def npartitions(self) -> Optional[int]:
@@ -215,7 +217,7 @@ class HeadNode(Node, ABC):
         # Execute graph distributedly and return the aggregated results from all tasks
         # List of action nodes in the same order as values
         local_nodes = self._get_action_nodes()
-        returned_values = self.backend.ProcessAndMerge(self._build_ranges(), mapper, distrdf_reducer, self.live_visualization_enabled, self.histogram_ids, local_nodes, self.live_visualization_callback)
+        returned_values = self.backend.ProcessAndMerge(self._build_ranges(), mapper, distrdf_reducer, self.live_visualization_enabled, self.histogram_id_callback_dict, local_nodes,)
         # Perform any extra checks that may be needed according to the
         # type of the head node
         final_values = self._handle_returned_values(returned_values)

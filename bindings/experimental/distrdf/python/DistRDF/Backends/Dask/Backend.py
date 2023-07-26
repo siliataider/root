@@ -133,7 +133,7 @@ class DaskBackend(Base.BaseBackend):
         return get_total_cores(self.client)
 
 
-    def ProcessAndMerge(self, ranges, mapper, reducer, live_visualization_enabled, histogram_ids, local_nodes, callback):
+    def ProcessAndMerge(self, ranges, mapper, reducer, live_visualization_enabled, histogram_id_callback_dict, local_nodes):
         """
         Performs map-reduce using Dask framework.
 
@@ -212,7 +212,7 @@ class DaskBackend(Base.BaseBackend):
             # Create a new canvas
             backend_pad = ROOT.TVirtualPad.TContext()
 
-            num_histograms = len(histogram_ids)
+            num_histograms = len(histogram_id_callback_dict)
             canvas_rows = math.ceil(math.sqrt(num_histograms))
             canvas_cols = math.ceil(num_histograms / canvas_rows)
             canvas_width = 600 * canvas_cols
@@ -233,8 +233,9 @@ class DaskBackend(Base.BaseBackend):
 
                 pad_num = 1
                 for i, mergeable in enumerate(mergeables):
+                    histogram_id = local_nodes[i].node_id
                     operation = local_nodes[i].operation.name
-                    if operation == "Histo1D" and local_nodes[i].node_id in histogram_ids:
+                    if operation == "Histo1D" and histogram_id in histogram_id_callback_dict:
                         # Return the actual histogram object
                         h = mergeable.GetValue()  
 
@@ -249,6 +250,7 @@ class DaskBackend(Base.BaseBackend):
                         # If I move to the right pad after calling the fit it breaks
                         pad = c.cd(pad_num)
 
+                        callback = histogram_id_callback_dict[histogram_id]
                         if callback:
                             callback(cumulative_histograms[i])
 
