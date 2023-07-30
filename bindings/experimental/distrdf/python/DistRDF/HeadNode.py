@@ -105,15 +105,6 @@ class HeadNode(Node, ABC):
         # column names.
         self._localdf = localdf
 
-        # Flag indicating whether live visualization is enabled
-        self.live_visualization_enabled: bool = False
-
-        # ID(s) of the histogram(s) to live visualize
-        #self.histogram_ids: List[int] = []
-
-        # User-defined callback function for live visualization
-        #self.live_visualization_callback: Optional[Callable] = None
-
         # A dictionary where the keys are the histograms and the values are the corresponding callback functions 
         self.histogram_id_callback_dict: Dict[int, Optional[Callable]] = {}
 
@@ -217,7 +208,18 @@ class HeadNode(Node, ABC):
         # Execute graph distributedly and return the aggregated results from all tasks
         # List of action nodes in the same order as values
         local_nodes = self._get_action_nodes()
-        returned_values = self.backend.ProcessAndMerge(self._build_ranges(), mapper, distrdf_reducer, self.live_visualization_enabled, self.histogram_id_callback_dict, local_nodes,)
+
+        if self.histogram_id_callback_dict:
+            for i in range(len(local_nodes)):
+                if local_nodes[i].node_id in self.histogram_id_callback_dict:
+                    # Get the current value for the histogram_id
+                    current_value = self.histogram_id_callback_dict[local_nodes[i].node_id]
+                    # Update the value to include the index 'i' as the second element of the tuple
+                    self.histogram_id_callback_dict[local_nodes[i].node_id] = (current_value, i)
+
+        returned_values = self.backend.ProcessAndMerge(self._build_ranges(), mapper, distrdf_reducer, self.histogram_id_callback_dict)
+
+
         # Perform any extra checks that may be needed according to the
         # type of the head node
         final_values = self._handle_returned_values(returned_values)

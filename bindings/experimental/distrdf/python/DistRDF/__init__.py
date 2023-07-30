@@ -26,11 +26,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-from typing import List, Dict, Optional, Callable
+from typing import List, Dict, Optional, Callable, Any
 import ast
 import inspect
 import warnings
-
+from functools import singledispatch
 
 def is_action_blocked(node):
     """
@@ -104,46 +104,8 @@ def is_valid_histogram(obj):
         return False
 
 
-'''def live_visualize(histograms: List, callback=None) -> None:
-    """
-    Enables live visualization for the given histograms by setting the
-    live_visualization_enabled flag of the Headnode to True.
-
-    Args:
-        histograms (List[ROOT.TH1D]): The list of histograms to enable live visualization for.
-    """
-    import ROOT
-    from DistRDF import HeadNode
-
-    valid_arg = True
-
-    # TODO figure out how to check the type of the histograms without triggering the computation graph with .GetValue()
-    
-    for hist in histograms:
-        valid_arg = is_valid_histogram(hist)
-        print(valid_arg)
-    
-    if valid_arg:
-        headnode = histograms[0].proxied_node.get_head() # Assuming all passed histograms share the same headnode
-        headnode.live_visualization_enabled = True
-        headnode.histogram_ids = [histogram.proxied_node.node_id for histogram in histograms]
-
-        if callback:
-            if callable(callback):
-                if len(inspect.signature(callback).parameters) == 1:
-                    if is_callback_safe(callback):
-                        headnode.live_visualization_callback = callback
-                    else:
-                        warnings.warn("The provided callback function contains blocked actions. Skipping callback.")
-                else:
-                    warnings.warn("The callback function should have exactly one parameter. Skipping callback.")
-            else:
-                warnings.warn("The provided callback is not callable. Skipping callback.")
-    else:
-        raise ValueError("All elements in the 'histograms' list must be valid ROOT.TH1D histograms. Skipping live visualization.")'''
-    
-
-def live_visualize(histogram_callback_dict: Dict[type, Optional[Callable]]):
+@singledispatch   
+def live_visualize(histogram_callback_dict: Dict[type, Optional[Callable]], global_callback: Optional[Callable] = None):
     """
     Enables live visualization for the given histograms by setting the
     live_visualization_enabled flag of the Headnode to True.
@@ -153,21 +115,25 @@ def live_visualize(histogram_callback_dict: Dict[type, Optional[Callable]]):
             the histograms and the values are the corresponding callback functions. The callback
             functions are optional (can be set to None) if no callback is required for a specific histogram.
     """
+
     # Import the necessary ROOT classes inside the function to avoid circular dependency
     import ROOT
     from DistRDF import HeadNode
 
-
     histogram_id_callback_dict = {}
-
+    
     for hist, callback in histogram_callback_dict.items():
+        callbacks = []
+
         if not is_valid_histogram(hist):
             raise ValueError("All elements in the 'histograms' list must be valid ROOT.TH1D histograms. Skipping live visualization.")
         
         if callback:
             if callable(callback):
                 if len(inspect.signature(callback).parameters) == 1:
-                    if not is_callback_safe(callback):
+                    if is_callback_safe(callback):
+                        callbacks.append(callback)
+                    else:
                         callback = None
                         warnings.warn("The provided callback function contains blocked actions. Skipping callback: ")
                 else:
@@ -177,19 +143,27 @@ def live_visualize(histogram_callback_dict: Dict[type, Optional[Callable]]):
                 callback = None
                 warnings.warn("The provided callback is not callable. Skipping callback.")
         
-        histogram_id_callback_dict[hist.proxied_node.node_id] =  callback
+        if global_callback:
+            callbacks.append(global_callback)
 
+        histogram_id_callback_dict[hist.proxied_node.node_id] = callbacks
 
-    headnode = list(histogram_callback_dict)[0].proxied_node.get_head()
-    headnode.live_visualization_enabled = True
+    headnode = list(histogram_callback_dict)[0].proxied_node.get_head() # Assuming all hists share the same headnode
     headnode.histogram_id_callback_dict = histogram_id_callback_dict
+    
 
-            
-'''
-if len(callback.__code__.co_varnames) == 1:
-if len(inspect.signature(callback).parameters) != 1:
-'''
+@live_visualize.register(list)
+def _1(histograms: List, callback: Optional[Callable] = None):
 
+    # Handle the case where the user passes a list without a dictionary
+    if callback is None:
+        histogram_callback_dict = {hist: None for hist in histograms}
+    else:
+        histogram_callback_dict = {hist: callback for hist in histograms}
+
+    # Call the main live_visualize function with the histogram_callback_dict
+    live_visualize(histogram_callback_dict)
+    
 
 def initialize(fun, *args, **kwargs):
     """

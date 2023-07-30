@@ -133,7 +133,7 @@ class DaskBackend(Base.BaseBackend):
         return get_total_cores(self.client)
 
 
-    def ProcessAndMerge(self, ranges, mapper, reducer, live_visualization_enabled, histogram_id_callback_dict, local_nodes):
+    def ProcessAndMerge(self, ranges, mapper, reducer, histogram_id_callback_dict):
         """
         Performs map-reduce using Dask framework.
 
@@ -200,79 +200,8 @@ class DaskBackend(Base.BaseBackend):
 
         mergeables_lists = [dmapper(range) for range in ranges]
 
-        if live_visualization_enabled:
-            print("Live visualization enabled")
-
-            #test_delayed_tasks = [dmapper(range) for range in ranges]
-            test_delayed_tasks = mergeables_lists
-
-            # Convert the list of delayed objects into a list of futures
-            test_future_tasks = self.client.compute(test_delayed_tasks)
-        
-            # Create a new canvas
-            backend_pad = ROOT.TVirtualPad.TContext()
-
-            num_histograms = len(histogram_id_callback_dict)
-            canvas_rows = math.ceil(math.sqrt(num_histograms))
-            canvas_cols = math.ceil(num_histograms / canvas_rows)
-            canvas_width = 600 * canvas_cols
-            canvas_height = 300 * canvas_rows
-            c = ROOT.TCanvas("distrdf_backend", "distrdf_backend", canvas_width, canvas_height)
-            canvas_divided = False
-
-            # Create a dictionary to store cumulative histograms for each division
-            cumulative_histograms = {}
-            cumulative_sum = 0
-
-            for future in as_completed(test_future_tasks):
-                mergeables = future.result().mergeables
-                if not canvas_divided:
-                    # Divide the canvas into pads based on the number of histograms if not already done
-                    c.Divide(canvas_rows, canvas_cols)
-                    canvas_divided = True
-
-                pad_num = 1
-                for i, mergeable in enumerate(mergeables):
-                    histogram_id = local_nodes[i].node_id
-                    operation = local_nodes[i].operation.name
-                    if operation == "Histo1D" and histogram_id in histogram_id_callback_dict:
-                        # Return the actual histogram object
-                        h = mergeable.GetValue()  
-
-                        if i not in cumulative_histograms:
-                            cumulative_histograms[i] = h.Clone()
-                        else:
-                            cumulative_histograms[i].Add(h)
-
-                        #cumulative_histograms[i].SetFillColor(random.randint(1, 9))
-
-                        # Move to the appropriate pad
-                        # If I move to the right pad after calling the fit it breaks
-                        pad = c.cd(pad_num)
-
-                        callback = histogram_id_callback_dict[histogram_id]
-                        if callback:
-                            callback(cumulative_histograms[i])
-
-                        cumulative_histograms[i].Draw()
-                        
-                        # Update the pad
-                        pad.Update()
-                        pad_num += 1
-                    
-                    # Treatment of other operations
-                    '''
-                    elif operation == "Sum":
-                        cumulative_sum += mergeable.GetValue() 
-                        print("Current Sum = ", cumulative_sum)
-                    elif operation == "Mean":
-                        print("Current Mean = ", mergeable.GetValue())
-                    elif operation == "Max":
-                        print("Current Max = ", mergeable.GetValue())
-                    '''
-
-            time.sleep(3)
-            c.Close()
+        if histogram_id_callback_dict:
+            self.live_visualize_histograms(mergeables_lists, histogram_id_callback_dict)
         else:
             print("Live visualization disabled")
         
@@ -293,9 +222,60 @@ class DaskBackend(Base.BaseBackend):
         final_results = mergeables_lists.pop().persist()
         progress(final_results)
         
-        ret = final_results.compute()
+        return final_results.compute()
+    
+    def live_visualize_histograms(self, mergeables_lists, histogram_id_callback_dict):
+        print("Live visualization enabled")
 
-        return ret
+        # Convert the list of delayed objects into a list of futures
+        test_future_tasks = self.client.compute(mergeables_lists)
+    
+        # Create a new canvas
+        backend_pad = ROOT.TVirtualPad.TContext()
+
+        num_histograms = len(histogram_id_callback_dict)
+        canvas_rows = math.ceil(math.sqrt(num_histograms))
+        canvas_cols = math.ceil(num_histograms / canvas_rows)
+        canvas_width = 600 * canvas_cols
+        canvas_height = 300 * canvas_rows
+        c = ROOT.TCanvas("distrdf_backend", "distrdf_backend", canvas_width, canvas_height)
+        canvas_divided = False
+
+        # Create a dictionary to store cumulative histograms for each division
+        cumulative_histograms = {}
+
+        for future in as_completed(test_future_tasks):
+            mergeables = future.result().mergeables
+            if not canvas_divided:
+                # Divide the canvas into pads based on the number of histograms if not already done
+                c.Divide(canvas_rows, canvas_cols)
+                canvas_divided = True
+
+            pad_num = 1
+            for histogram_id in histogram_id_callback_dict.keys():
+                callbacks_list, index = histogram_id_callback_dict[histogram_id]
+
+                h = mergeables[index] .GetValue()  
+
+                if index not in cumulative_histograms:
+                    cumulative_histograms[index] = h.Clone()
+                else:
+                    cumulative_histograms[index].Add(h)
+
+                # Move to the appropriate pad (before executing callbacks that potentially trigger the computation graph)
+                pad = c.cd(pad_num)
+
+                if callbacks_list:
+                    for callback in callbacks_list:
+                        callback(cumulative_histograms[index])
+
+                cumulative_histograms[index].Draw()
+                
+                # Update the pad
+                pad.Update()
+                pad_num += 1
+
+        c.Close()
 
     def distribute_unique_paths(self, paths):
         """
