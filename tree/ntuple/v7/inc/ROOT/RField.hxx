@@ -174,6 +174,87 @@ public:
       RFieldBase *GetField() const { return fField; }
    }; // class RValue
 
+   /// Similar to RValue but manages an array of consecutive values. Bulks have to come from the same cluster.
+   /// Bulk I/O works with two bit masks: the mask of all the available entries in the current bulk and the mask
+   /// of the required entries in a bulk read. The idea is that a single bulk may serve multiple read operations
+   /// on the same range, where in each read operation a different subset of values is required.
+   /// The memory of the value array is managed by the RBulk class.
+   class RBulk {
+   private:
+      friend class RFieldBase;
+
+      RFieldBase *fField = nullptr;       ///< The field that created the array of values
+      void *fValues = nullptr;            ///< Pointer to the start of the array
+      std::size_t fValueSize = 0;         ///< Cached copy of fField->GetValueSize()
+      std::size_t fCapacity = 0;          ///< The size of the array memory block in number of values
+      std::size_t fSize = 0;              ///< The number of available values in the array (provided their mask is set)
+      std::unique_ptr<bool[]> fMaskAvail; ///< Masks invalid values in the array
+      std::size_t fNValidValues = 0;      ///< The sum of non-zero elements in the fMask
+      RClusterIndex fFirstIndex;          ///< Index of the first value of the array
+
+      void ReleaseValues();
+      /// Sets a new range for the bulk. If there is enough capacity, the fValues array will be reused.
+      /// Otherwise a new array is allocated. After reset, fMaskAvail is false for all values.
+      void Reset(const RClusterIndex &firstIndex, std::size_t size);
+      void CountValidValues();
+
+      bool ContainsRange(const RClusterIndex &firstIndex, std::size_t size) const
+      {
+         if (firstIndex.GetClusterId() != fFirstIndex.GetClusterId())
+            return false;
+         return (firstIndex.GetIndex() >= fFirstIndex.GetIndex()) &&
+                ((firstIndex.GetIndex() + size) <= (fFirstIndex.GetIndex() + fSize));
+      }
+
+      void *GetValuePtrAt(std::size_t idx) const
+      {
+         return reinterpret_cast<unsigned char *>(fValues) + idx * fValueSize;
+      }
+
+      explicit RBulk(RFieldBase *field) : fField(field), fValueSize(field->GetValueSize()) {}
+
+   public:
+      ~RBulk();
+      RBulk(const RBulk &) = delete;
+      RBulk &operator=(const RBulk &) = delete;
+      RBulk(RBulk &&other);
+      RBulk &operator=(RBulk &&other);
+
+      /// Reads 'size' values from the associated field, starting from 'firstIndex'. Note that the index is given
+      /// relative to a certain cluster. The return value points to the array of read objects.
+      /// The 'maskReq' parameter is a bool array of at least 'size' elements. Only objects for which the mask is
+      /// true are guaranteed to be read in the returned value array.
+      void *ReadBulk(const RClusterIndex &firstIndex, const bool *maskReq, std::size_t size)
+      {
+         if (!ContainsRange(firstIndex, size))
+            Reset(firstIndex, size);
+
+         // We may read a sub range of the currently available range
+         auto offset = firstIndex.GetIndex() - fFirstIndex.GetIndex();
+
+         if (fNValidValues == fSize)
+            return GetValuePtrAt(offset);
+
+         RBulkSpec bulkSpec;
+         bulkSpec.fFirstIndex = firstIndex;
+         bulkSpec.fCount = size;
+         bulkSpec.fMaskReq = maskReq;
+         bulkSpec.fMaskAvail = &fMaskAvail[offset];
+         bulkSpec.fValues = GetValuePtrAt(offset);
+         auto nRead = fField->ReadBulk(bulkSpec);
+         if (nRead == RBulkSpec::kAllSet) {
+            if ((offset == 0) && (size == fSize)) {
+               fNValidValues = fSize;
+            } else {
+               CountValidValues();
+            }
+         } else {
+            fNValidValues += nRead;
+         }
+         return GetValuePtrAt(offset);
+      }
+   }; // class RBulk
+
 private:
    /// The field name relative to its parent field
    std::string fName;
@@ -209,6 +290,21 @@ private:
    NTupleSize_t EntryToColumnElementIndex(NTupleSize_t globalIndex) const;
 
 protected:
+   /// Input parameter to ReadBulk() and ReadBulkImpl(). See RBulk class for more information
+   struct RBulkSpec {
+      /// As a return value of ReadBulk and ReadBulkImpl(), indicates that the full bulk range was read
+      /// independent of the provided masks.
+      static const std::size_t kAllSet = std::size_t(-1);
+
+      RClusterIndex fFirstIndex; ///< Start of the bulk range
+      std::size_t fCount = 0;    ///< Size of the bulk range
+      /// A bool array of size fCount, indicating the required values in the requested range
+      const bool *fMaskReq = nullptr;
+      bool *fMaskAvail = nullptr; ///< A bool array of size fCount, indicating the valid values in fValues
+      /// The destination area, which has to be a big enough array of valid objects of the correct type
+      void *fValues = nullptr;
+   };
+
    /// Collections and classes own sub fields
    std::vector<std::unique_ptr<RFieldBase>> fSubFields;
    /// Sub fields point to their mother field
@@ -310,6 +406,26 @@ protected:
          ReadInClusterImpl(clusterIndex, to);
       if (R__unlikely(!fReadCallbacks.empty()))
          InvokeReadCallbacks(to);
+   }
+
+   /// General implementation of bulk read. Loop over the required range and read values that are required
+   /// and not already present. Derived classes may implement more optimized versions of this method.
+   /// See ReadBulk() for the return value.
+   virtual std::size_t ReadBulkImpl(const RBulkSpec &bulkSpec);
+
+   /// Returns the number of newly available values, that is the number of bools in bulkSpec.fMaskAvail that
+   /// flipped from false to true. As a special return value, kAllSet can be used if all values are read
+   /// independent from the masks.
+   std::size_t ReadBulk(const RBulkSpec &bulkSpec)
+   {
+      if (fIsSimple) {
+         /// For simple types, ignore the mask and memcopy the values into the destination
+         fPrincipalColumn->ReadV(bulkSpec.fFirstIndex, bulkSpec.fCount, bulkSpec.fValues);
+         std::fill(bulkSpec.fMaskAvail, bulkSpec.fMaskAvail + bulkSpec.fCount, true);
+         return RBulkSpec::kAllSet;
+      }
+
+      return ReadBulkImpl(bulkSpec);
    }
 
    /// Allow derived classes to call Append and Read on other (sub) fields.
@@ -418,6 +534,8 @@ public:
 
    /// Generates an object of the field type and allocates new initialized memory according to the type.
    RValue GenerateValue();
+   /// The returned bulk is initially empty; RBulk::ReadBulk will construct the array of values
+   RBulk GenerateBulk() { return RBulk(this); }
    /// Creates a value from a memory location with an already constructed object
    RValue BindValue(void *where) { return RValue(this, where, false /* isOwning */); }
    /// Creates the list of direct child values given a value for this field.  E.g. a single value for the

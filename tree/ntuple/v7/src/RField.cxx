@@ -239,6 +239,82 @@ ROOT::Experimental::Detail::RFieldBase::RColumnRepresentations::RColumnRepresent
 
 //------------------------------------------------------------------------------
 
+ROOT::Experimental::Detail::RFieldBase::RBulk::RBulk(RBulk &&other)
+   : fField(other.fField),
+     fValueSize(other.fValueSize),
+     fCapacity(other.fCapacity),
+     fSize(other.fSize),
+     fNValidValues(other.fNValidValues),
+     fFirstIndex(other.fFirstIndex)
+{
+   std::swap(fValues, other.fValues);
+   std::swap(fMaskAvail, other.fMaskAvail);
+}
+
+ROOT::Experimental::Detail::RFieldBase::RBulk &ROOT::Experimental::Detail::RFieldBase::RBulk::operator=(RBulk &&other)
+{
+   std::swap(fField, other.fField);
+   std::swap(fValues, other.fValues);
+   std::swap(fValueSize, other.fValueSize);
+   std::swap(fCapacity, other.fCapacity);
+   std::swap(fSize, other.fSize);
+   std::swap(fMaskAvail, other.fMaskAvail);
+   std::swap(fNValidValues, other.fNValidValues);
+   std::swap(fFirstIndex, other.fFirstIndex);
+   return *this;
+}
+
+ROOT::Experimental::Detail::RFieldBase::RBulk::~RBulk()
+{
+   if (fValues)
+      ReleaseValues();
+}
+
+void ROOT::Experimental::Detail::RFieldBase::RBulk::ReleaseValues()
+{
+   if (fField->GetTraits() & RFieldBase::kTraitTriviallyDestructible) {
+      free(fValues);
+      return;
+   }
+
+   for (std::size_t i = 0; i < fCapacity; ++i) {
+      fField->DestroyValue(GetValuePtrAt(i), true /* dtorOnly */);
+   }
+   free(fValues);
+}
+
+void ROOT::Experimental::Detail::RFieldBase::RBulk::Reset(const RClusterIndex &firstIndex, std::size_t size)
+{
+   if (fCapacity < size) {
+      ReleaseValues();
+      fValues = malloc(size * fValueSize);
+
+      if (!(fField->GetTraits() & RFieldBase::kTraitTriviallyConstructible)) {
+         for (std::size_t i = 0; i < size; ++i) {
+            fField->GenerateValue(GetValuePtrAt(i));
+         }
+      }
+
+      fMaskAvail = std::make_unique<bool[]>(size);
+      fCapacity = size;
+   }
+
+   std::fill(fMaskAvail.get(), fMaskAvail.get() + size, false);
+   fNValidValues = 0;
+
+   fFirstIndex = firstIndex;
+   fSize = size;
+}
+
+void ROOT::Experimental::Detail::RFieldBase::RBulk::CountValidValues()
+{
+   fNValidValues = 0;
+   for (std::size_t i = 0; i < fSize; ++i)
+      fNValidValues += static_cast<std::size_t>(fMaskAvail[i]);
+}
+
+//------------------------------------------------------------------------------
+
 ROOT::Experimental::Detail::RFieldBase::RFieldBase(std::string_view name, std::string_view type,
                                                    ENTupleStructure structure, bool isSimple, std::size_t nRepetitions)
    : fName(name), fType(type), fStructure(structure), fNRepetitions(nRepetitions), fIsSimple(isSimple),
@@ -445,6 +521,26 @@ std::size_t ROOT::Experimental::Detail::RFieldBase::AppendImpl(const void * /* f
 void ROOT::Experimental::Detail::RFieldBase::ReadGlobalImpl(ROOT::Experimental::NTupleSize_t /*index*/, void * /* to */)
 {
    R__ASSERT(false);
+}
+
+std::size_t ROOT::Experimental::Detail::RFieldBase::ReadBulkImpl(const RBulkSpec &bulkSpec)
+{
+   const auto valueSize = GetValueSize();
+   std::size_t nRead = 0;
+   for (std::size_t i = 0; i < bulkSpec.fCount; ++i) {
+      // Value not needed
+      if (!bulkSpec.fMaskReq[i])
+         continue;
+
+      // Value already present
+      if (bulkSpec.fMaskAvail[i])
+         continue;
+
+      Read(bulkSpec.fFirstIndex + i, reinterpret_cast<unsigned char *>(bulkSpec.fValues) + i * valueSize);
+      bulkSpec.fMaskAvail[i] = true;
+      nRead++;
+   }
+   return nRead;
 }
 
 ROOT::Experimental::Detail::RFieldBase::RValue ROOT::Experimental::Detail::RFieldBase::GenerateValue()
