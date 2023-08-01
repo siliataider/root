@@ -217,7 +217,10 @@ class HeadNode(Node, ABC):
                     # Update the value to include the index 'i' as the second element of the tuple
                     self.histogram_id_callback_dict[local_nodes[i].node_id] = (current_value, i)
 
-        returned_values = self.backend.ProcessAndMerge(self._build_ranges(), mapper, distrdf_reducer, self.histogram_id_callback_dict)
+            returned_values = self.backend.ProcessAndMergeLive(self._build_ranges(), mapper, distrdf_reducer, self.histogram_id_callback_dict)
+
+        else:
+            returned_values = self.backend.ProcessAndMerge(self._build_ranges(), mapper, distrdf_reducer)
 
 
         # Perform any extra checks that may be needed according to the

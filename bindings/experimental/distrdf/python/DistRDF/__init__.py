@@ -120,36 +120,44 @@ def live_visualize(histogram_callback_dict: Dict[type, Optional[Callable]], glob
     import ROOT
     from DistRDF import HeadNode
 
-    histogram_id_callback_dict = {}
-    
-    for hist, callback in histogram_callback_dict.items():
-        callbacks = []
+    value = list(histogram_callback_dict)[0].proxied_node.value
+    '''
+    BEFORE > VALUE: None
+    AFTER > VALUE:  Name: exponential2 Title: Exponential distribution NbinsX: 50
+    '''
+    if value:
+        warnings.warn("live_visualize() should be called before triggering the computation graph. Skipping live visualization.")
 
-        if not is_valid_histogram(hist):
-            raise ValueError("All elements in the 'histograms' list must be valid ROOT.TH1D histograms. Skipping live visualization.")
-        
-        if callback:
-            if callable(callback):
-                if len(inspect.signature(callback).parameters) == 1:
-                    if is_callback_safe(callback):
-                        callbacks.append(callback)
+    else:
+        histogram_id_callback_dict = {}
+        for hist, callback in histogram_callback_dict.items():
+            callbacks = []
+
+            if not is_valid_histogram(hist):
+                raise ValueError("All elements in the 'histograms' list must be valid ROOT.TH1D histograms. Skipping live visualization.")
+            
+            if callback:
+                if callable(callback):
+                    if len(inspect.signature(callback).parameters) == 1:
+                        if is_callback_safe(callback):
+                            callbacks.append(callback)
+                        else:
+                            callback = None
+                            warnings.warn("The provided callback function contains blocked actions. Skipping callback: ")
                     else:
                         callback = None
-                        warnings.warn("The provided callback function contains blocked actions. Skipping callback: ")
+                        warnings.warn("The callback function should have exactly one parameter. Skipping callback.")
                 else:
                     callback = None
-                    warnings.warn("The callback function should have exactly one parameter. Skipping callback.")
-            else:
-                callback = None
-                warnings.warn("The provided callback is not callable. Skipping callback.")
-        
-        if global_callback:
-            callbacks.append(global_callback)
+                    warnings.warn("The provided callback is not callable. Skipping callback.")
+            
+            if global_callback:
+                callbacks.append(global_callback)
 
-        histogram_id_callback_dict[hist.proxied_node.node_id] = callbacks
+            histogram_id_callback_dict[hist.proxied_node.node_id] = callbacks
 
-    headnode = list(histogram_callback_dict)[0].proxied_node.get_head() # Assuming all hists share the same headnode
-    headnode.histogram_id_callback_dict = histogram_id_callback_dict
+        headnode = list(histogram_callback_dict)[0].proxied_node.get_head() # Assuming all hists share the same headnode
+        headnode.histogram_id_callback_dict = histogram_id_callback_dict
     
 
 @live_visualize.register(list)

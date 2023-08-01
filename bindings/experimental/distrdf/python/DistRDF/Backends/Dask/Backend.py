@@ -132,8 +132,43 @@ class DaskBackend(Base.BaseBackend):
         """
         return get_total_cores(self.client)
 
+    @staticmethod
+    def dask_mapper(current_range, headers, shared_libraries, mapper):
+        """
+        Gets the paths to the file(s) in the current executor, then
+        declares the headers found.
 
-    def ProcessAndMerge(self, ranges, mapper, reducer, histogram_id_callback_dict):
+        Args:
+            current_range (tuple): The current range of the dataset being
+                processed on the executor.
+
+        Returns:
+            function: The map function to be executed on each executor,
+            complete with all headers needed for the analysis.
+        """
+        # Retrieve the current worker local directory
+        localdir = get_worker().local_directory
+
+        # Get and declare headers on each worker
+        headers_on_executor = [
+            os.path.join(localdir, os.path.basename(filepath))
+            for filepath in headers
+        ]
+        Utils.declare_headers(headers_on_executor)
+
+        # Get and declare shared libraries on each worker
+        shared_libs_on_ex = [
+            os.path.join(localdir, os.path.basename(filepath))
+            for filepath in shared_libraries
+        ]
+        Utils.declare_shared_libraries(shared_libs_on_ex)
+
+        ret = mapper(current_range)
+
+        return ret
+
+    def ProcessAndMerge(self, ranges, mapper, reducer):
+        print("Live visualization disabled")
         """
         Performs map-reduce using Dask framework.
 
@@ -158,53 +193,11 @@ class DaskBackend(Base.BaseBackend):
         #
         # Which boil down to the self.client object not being serializable
         #         
-        headers = self.headers
-        shared_libraries = self.shared_libraries
 
-        def dask_mapper(current_range):
-            """
-            Gets the paths to the file(s) in the current executor, then
-            declares the headers found.
-
-            Args:
-                current_range (tuple): The current range of the dataset being
-                    processed on the executor.
-
-            Returns:
-                function: The map function to be executed on each executor,
-                complete with all headers needed for the analysis.
-            """
-            # Retrieve the current worker local directory
-            localdir = get_worker().local_directory
-
-            # Get and declare headers on each worker
-            headers_on_executor = [
-                os.path.join(localdir, os.path.basename(filepath))
-                for filepath in headers
-            ]
-            Utils.declare_headers(headers_on_executor)
-
-            # Get and declare shared libraries on each worker
-            shared_libs_on_ex = [
-                os.path.join(localdir, os.path.basename(filepath))
-                for filepath in shared_libraries
-            ]
-            Utils.declare_shared_libraries(shared_libs_on_ex)
-
-            ret = mapper(current_range)
-
-            return ret
-
-        dmapper = dask.delayed(dask_mapper)
+        dmapper = dask.delayed(DaskBackend.dask_mapper)
         dreducer = dask.delayed(reducer)
 
-        mergeables_lists = [dmapper(range) for range in ranges]
-
-        if histogram_id_callback_dict:
-            self.live_visualize_histograms(mergeables_lists, histogram_id_callback_dict)
-        else:
-            print("Live visualization disabled")
-        
+        mergeables_lists = [dmapper(range, self.headers, self.shared_libraries, mapper) for range in ranges]
 
         while len(mergeables_lists) > 1:
             mergeables_lists.append(
@@ -221,31 +214,44 @@ class DaskBackend(Base.BaseBackend):
         # https://docs.dask.org/en/latest/diagnostics-distributed.html#dask.distributed.progress
         final_results = mergeables_lists.pop().persist()
         progress(final_results)
-        
-        return final_results.compute()
+        ret = final_results.compute()
+
+        return ret
     
-    def live_visualize_histograms(self, mergeables_lists, histogram_id_callback_dict):
+    def ProcessAndMergeLive(self, ranges, mapper, reducer, histogram_id_callback_dict):  
+
         print("Live visualization enabled")
 
-        # Convert the list of delayed objects into a list of futures
-        test_future_tasks = self.client.compute(mergeables_lists)
-    
+        dmapper = dask.delayed(DaskBackend.dask_mapper)
+
+        mergeables_lists = [dmapper(range, self.headers, self.shared_libraries, mapper) for range in ranges]
+
+        future_tasks = self.client.compute(mergeables_lists)
+
         # Create a new canvas
         backend_pad = ROOT.TVirtualPad.TContext()
 
         num_histograms = len(histogram_id_callback_dict)
         canvas_rows = math.ceil(math.sqrt(num_histograms))
         canvas_cols = math.ceil(num_histograms / canvas_rows)
-        canvas_width = 600 * canvas_cols
-        canvas_height = 300 * canvas_rows
+        canvas_width = 800 * canvas_cols
+        canvas_height = 400 * canvas_rows
         c = ROOT.TCanvas("distrdf_backend", "distrdf_backend", canvas_width, canvas_height)
         canvas_divided = False
 
         # Create a dictionary to store cumulative histograms for each division
         cumulative_histograms = {}
 
-        for future in as_completed(test_future_tasks):
-            mergeables = future.result().mergeables
+        res = None
+        for future in as_completed(future_tasks):
+            if res is None:
+                res = future.result()
+            else:
+                to_merge = future.result()
+                res = reducer(res, to_merge)            
+
+            mergeables = res.mergeables
+
             if not canvas_divided:
                 # Divide the canvas into pads based on the number of histograms if not already done
                 c.Divide(canvas_rows, canvas_cols)
@@ -255,12 +261,8 @@ class DaskBackend(Base.BaseBackend):
             for histogram_id in histogram_id_callback_dict.keys():
                 callbacks_list, index = histogram_id_callback_dict[histogram_id]
 
-                h = mergeables[index] .GetValue()  
-
-                if index not in cumulative_histograms:
-                    cumulative_histograms[index] = h.Clone()
-                else:
-                    cumulative_histograms[index].Add(h)
+                h = mergeables[index].GetValue()  
+                cumulative_histograms[index] = h.Clone()
 
                 # Move to the appropriate pad (before executing callbacks that potentially trigger the computation graph)
                 pad = c.cd(pad_num)
@@ -270,12 +272,13 @@ class DaskBackend(Base.BaseBackend):
                         callback(cumulative_histograms[index])
 
                 cumulative_histograms[index].Draw()
-                
                 # Update the pad
                 pad.Update()
                 pad_num += 1
-
+                
         c.Close()
+        return res
+                
 
     def distribute_unique_paths(self, paths):
         """

@@ -92,9 +92,11 @@ def set_random_fill_color(hist):
     hist.SetFillColor(random.randint(1, 9))
 
 # 2. A fitting callback function
-def fit(hist):
-    # If I move to the right pad in the backend after calling the fit it breaks
+def fit_gaus(hist):
     hist.Fit("gaus")
+
+def fit_exp(hist):
+    hist.Fit("expo")
 
 # 3. TODO A writing the hist to a tfile.WriteObject(h, "name") callback function 
 def write_histogram_to_tfile(hist):
@@ -144,38 +146,56 @@ if __name__ == "__main__":
     df = RDataFrame(1000000, daskclient=connection)
 
     # Plot the histograms side by side on a canvas
-    c = ROOT.TCanvas("distrdf002", "distrdf002", 1000, 600)
+    c = ROOT.TCanvas("distrdf002", "distrdf002", 1400, 700)
 
     # Set the random seed and define two columns of the dataset with random numbers.
     ROOT.gRandom.SetSeed(1)
     df_1 = df.Define("gaus", "gRandom->Gaus(10, 1)").Define("exponential", "gRandom->Exp(10)")
-    df_2 = df.Define("random", "gRandom->Rndm() * 30")
+    #df_2 = df.Define("random", "gRandom->Rndm() * 30")
 
-
+    h_random = df.Define("random", "gRandom->Rndm() * 30").Histo1D(("random", "Random distribution", 50, 0, 30), "random")
+    h_exp = df.Define("exponential1", "gRandom->Exp(10)").Histo1D(("exponential1", "Exponential distribution 1", 50, 0, 30), "exponential1")
     h_gaus = df_1.Histo1D(("gaus", "Normal distribution", 50, -20, 20), "gaus")
-    h_sum = df_1.Sum("gaus")
-    h_exp = df_1.Histo1D(("exponential", "Exponential distribution", 50, 0, 30), "exponential")
-    h_random = df_2.Histo1D(("random", "Random distribution", 50, 0, 30), "random")
-    h_mean = df_2.Mean("random")
-    h_exp2 = df_1.Histo1D(("exponential2", "Exponential distribution 2", 20, 0, 70), "exponential")
-    h_max = df_1.Max("exponential")  
+    h_exp2 = df.Define("exponential2", "gRandom->Exp(20)").Histo1D(("exponential2", "Exponential distribution 2", 50, 0, 100), "exponential2")
 
-    var = 5
-    
+    h_sum = df_1.Sum("gaus")
+    h_mean = df_1.Mean("gaus")
+    h_max = df_1.Max("exponential") 
+
     c.Divide(2, 2)
 
+    """
+    1. Pass a list of histograms
+    """
     #live_visualize([h_random, h_exp, h_gaus])
-    #live_visualize([h_exp2, h_exp, h_gaus, h_random], two_args)
+
+    """ 
+    2. Pass a list of histograms and a function to be executed on all of them
+    """
+    #live_visualize([h_exp2, h_exp, h_gaus, h_random], set_random_fill_color)
 
     histogram_callback_dict = {
-        h_exp2: set_random_fill_color,
-        h_exp: two_args,
+        h_exp2: fit_exp,
+        h_exp: delete_histogram,
         h_random: None,
-        h_gaus: fit
+        h_gaus: fit_gaus
     }  
 
-    live_visualize(histogram_callback_dict)
+    """ 
+    3. Pass a dictionary of histograms and callback functions to be executed on each
+    """
+    #live_visualize(histogram_callback_dict)
 
+    """ 
+    4. Pass a dictionary of histograms and callback functions to be executed on each
+       plus a global callback function to be executed on all histograms
+    """
+    #h_random.SetFillColor(ROOT.kBlue)
+
+    live_visualize(histogram_callback_dict, set_random_fill_color)
+
+        
+    #h_exp.SetFillColor(ROOT.kRed)
 
     c.cd(1)
     h_gaus.Draw()
@@ -184,19 +204,12 @@ if __name__ == "__main__":
     c.cd(3)
     h_random.Draw()
     c.cd(4)
-    h_exp2.Draw()
-
-    print("h_sum ", h_sum.GetValue()) 
-    print("h_mean ", h_mean.GetValue()) 
-    print("h_max ", h_max.GetValue()) 
-    
+    h_exp2.Draw() 
 
     c.Update()
 
-    time.sleep(5)
-    print("Done!")
+    print("sum: ", h_sum.GetValue())
+    print("mean: ", h_mean.GetValue())
 
-'''
-1. Raise an error when args are not histograms
-2. Added a disctionary ro be handed to live_visualize instead of a list
-'''
+    time.sleep(2)
+    print("Done!")
