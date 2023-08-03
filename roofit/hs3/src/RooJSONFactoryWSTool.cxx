@@ -419,7 +419,7 @@ void importAnalysis(const JSONNode &rootnode, const JSONNode &analysisNode, cons
    JSONNode const *mcAuxNode = findRooFitInternal(rootnode, "ModelConfigs", analysisName);
 
    JSONNode const *mcNameNode = mcAuxNode ? mcAuxNode->find("mcName") : nullptr;
-   std::string mcname = mcNameNode ? mcNameNode->val() : analysisName.c_str();
+   std::string mcname = mcNameNode ? mcNameNode->val() : analysisName;
    if (workspace.obj(mcname))
       return;
 
@@ -1395,7 +1395,7 @@ void RooJSONFactoryWSTool::exportAllObjects(JSONNode &n)
    std::vector<RooJSONFactoryWSTool::CombinedData> combData;
    for (auto &d : alldata) {
       auto data = this->exportCombinedData(*d);
-      if (data.components.size() > 0)
+      if (!data.components.empty())
          combData.push_back(data);
    }
    // next, take care of regular datasets

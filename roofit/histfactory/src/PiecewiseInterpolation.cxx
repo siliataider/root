@@ -35,7 +35,7 @@
 #include "RooTrace.h"
 
 #include <exception>
-#include <math.h>
+#include <cmath>
 #include <algorithm>
 
 using namespace std;
@@ -354,7 +354,7 @@ Int_t PiecewiseInterpolation::getAnalyticalIntegralWN(RooArgSet& allVars, RooArg
   }
 
   // Store cache element
-  Int_t code = _normIntMgr.setObj(normSet,&analVars,(RooAbsCacheElement*)cache,0) ;
+  Int_t code = _normIntMgr.setObj(normSet,&analVars,(RooAbsCacheElement*)cache,nullptr) ;
 
   return code+1 ;
 }

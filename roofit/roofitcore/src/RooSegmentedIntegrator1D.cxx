@@ -33,7 +33,7 @@ numerical integration algorithm.
 #include "RooMsgService.h"
 #include "RooNumIntFactory.h"
 
-#include <assert.h>
+#include <cassert>
 
 
 
@@ -152,7 +152,7 @@ bool RooSegmentedIntegrator1D::setLimits(double* xmin, double* xmax)
 bool RooSegmentedIntegrator1D::checkLimits() const
 {
   if(_useIntegrandLimits) {
-    assert(0 != integrand() && integrand()->isValid());
+    assert(nullptr != integrand() && integrand()->isValid());
     _xmin= integrand()->getMinLimit(0);
     _xmax= integrand()->getMaxLimit(0);
   }

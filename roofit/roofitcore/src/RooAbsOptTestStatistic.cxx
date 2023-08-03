@@ -37,7 +37,7 @@ parallelized calculation of test statistics.
 
 #include "Riostream.h"
 #include "TClass.h"
-#include <string.h>
+#include <cstring>
 
 
 #include "RooAbsOptTestStatistic.h"
@@ -142,7 +142,7 @@ void RooAbsOptTestStatistic::initSlave(RooAbsReal& real, RooAbsData& indata, con
 
   // Clone FUNC
   _funcClone = RooHelpers::cloneTreeWithSameParameters(real, indata.get()).release();
-  _funcCloneSet = 0 ;
+  _funcCloneSet = nullptr ;
 
   // Attach FUNC to data set
   _funcObsSet = std::unique_ptr<RooArgSet>{_funcClone->getObservables(indata)}.release();
@@ -183,7 +183,7 @@ void RooAbsOptTestStatistic::initSlave(RooAbsReal& real, RooAbsData& indata, con
     auto realDepRLV = dynamic_cast<const RooAbsRealLValue*>((*_funcObsSet)[i]);
     if (realDepRLV && realDepRLV->isDerived()) {
       RooArgSet tmp2;
-      realDepRLV->leafNodeServerList(&tmp2, 0, true);
+      realDepRLV->leafNodeServerList(&tmp2, nullptr, true);
       _funcObsSet->add(tmp2,true);
     }
   }
@@ -664,7 +664,7 @@ bool RooAbsOptTestStatistic::setDataSlave(RooAbsData& indata, bool cloneData, bo
     _dataClone = nullptr ;
   }
 
-  if (!cloneData && _rangeName.size()>0) {
+  if (!cloneData && !_rangeName.empty()) {
     coutW(InputArguments) << "RooAbsOptTestStatistic::setData(" << GetName() << ") WARNING: test statistic was constructed with range selection on data, "
           << "ignoring request to _not_ clone the input dataset" << endl ;
     cloneData = true ;

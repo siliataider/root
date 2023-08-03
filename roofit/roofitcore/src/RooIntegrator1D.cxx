@@ -50,7 +50,7 @@ integration), a relative epsilon 5, 10 or more times higher than for the old int
 #include "RooNumIntFactory.h"
 #include "RooMsgService.h"
 
-#include <assert.h>
+#include <cassert>
 
 namespace {
 
@@ -418,7 +418,7 @@ bool RooIntegrator1D::setLimits(double *xmin, double *xmax)
 bool RooIntegrator1D::checkLimits() const
 {
   if(_useIntegrandLimits) {
-    assert(0 != integrand() && integrand()->isValid());
+    assert(nullptr != integrand() && integrand()->isValid());
     const_cast<double&>(_xmin) = integrand()->getMinLimit(0);
     const_cast<double&>(_xmax) = integrand()->getMaxLimit(0);
   }

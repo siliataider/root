@@ -39,9 +39,9 @@ Scientific Library version 1.5 and applies the 10-, 21-, 43- and
 reached
 **/
 
-#include <assert.h>
-#include <math.h>
-#include <float.h>
+#include <cassert>
+#include <cmath>
+#include <cfloat>
 #include "Riostream.h"
 #include "TMath.h"
 #include "RooGaussKronrodIntegrator1D.h"
@@ -184,7 +184,7 @@ bool RooGaussKronrodIntegrator1D::setLimits(double* xmin, double* xmax)
 bool RooGaussKronrodIntegrator1D::checkLimits() const
 {
   if(_useIntegrandLimits) {
-    assert(0 != integrand() && integrand()->isValid());
+    assert(nullptr != integrand() && integrand()->isValid());
     _xmin= integrand()->getMinLimit(0);
     _xmax= integrand()->getMaxLimit(0);
   }

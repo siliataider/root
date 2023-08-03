@@ -35,7 +35,7 @@ numerical integration algorithm.
 #include "RooNumIntFactory.h"
 #include "RooMsgService.h"
 
-#include <assert.h>
+#include <cassert>
 
 
 
@@ -98,7 +98,7 @@ RooSegmentedIntegrator2D::RooSegmentedIntegrator2D(const RooAbsFunc &function, d
 bool RooSegmentedIntegrator2D::checkLimits() const
 {
   if(_useIntegrandLimits) {
-    assert(0 != integrand() && integrand()->isValid());
+    assert(nullptr != integrand() && integrand()->isValid());
     _xmin= integrand()->getMinLimit(0);
     _xmax= integrand()->getMaxLimit(0);
   }
