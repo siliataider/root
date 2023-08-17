@@ -11,7 +11,7 @@
 ################################################################################
 from __future__ import annotations
 
-import os
+import os, sys, logging
 from typing import Any, Dict, Optional, TYPE_CHECKING
 import time
 import random
@@ -36,19 +36,8 @@ except ImportError:
 if TYPE_CHECKING:
     from dask_jobqueue import JobQueueCluster
 
-'''
-def live_visualize(histograms: List[ROOT.TH1D]) -> None:
-    """
-    Enables live visualization for the given histograms by setting the
-    live_visualization_enabled flag of the Headnode to True.
 
-    Args:
-        histograms (List[ROOT.TH1D]): The list of histograms to enable live visualization for.
-    """
-    headnode = histograms[0].proxied_node.get_head()
-    headnode.live_visualization_enabled = True
-    headnode.histogram_ids = [histogram.proxied_node.node_id for histogram in histograms]
-'''
+logging.basicConfig(level=logging.DEBUG, stream=sys.stderr, format="%(levelname)s: %(message)s")
 
 def get_total_cores_generic(client: Client) -> int:
     """
@@ -218,66 +207,74 @@ class DaskBackend(Base.BaseBackend):
 
         return ret
     
-    def ProcessAndMergeLive(self, ranges, mapper, reducer, histogram_id_callback_dict):  
-
-        print("Live visualization enabled")
-
+    def ProcessAndMergeLive(self, ranges, mapper, reducer, plot_object_callback_id_dict):  
+        logging.info("Live visualization enabled.")
         dmapper = dask.delayed(DaskBackend.dask_mapper)
 
         mergeables_lists = [dmapper(range, self.headers, self.shared_libraries, mapper) for range in ranges]
 
+        # Compute the delayed tasks to get Dask futures that can be passed to the as_completed method
         future_tasks = self.client.compute(mergeables_lists)
 
-        # Create a new canvas
+        # Save the current canvas
         backend_pad = ROOT.TVirtualPad.TContext()
 
-        num_histograms = len(histogram_id_callback_dict)
-        canvas_rows = math.ceil(math.sqrt(num_histograms))
-        canvas_cols = math.ceil(num_histograms / canvas_rows)
-        canvas_width = 800 * canvas_cols
-        canvas_height = 400 * canvas_rows
+        num_plots = len(plot_object_callback_id_dict)
+        canvas_rows = math.ceil(math.sqrt(num_plots))
+        canvas_cols = math.ceil(num_plots / canvas_rows)
+        canvas_width = 1000 * canvas_cols
+        canvas_height = 500 * canvas_rows
         c = ROOT.TCanvas("distrdf_backend", "distrdf_backend", canvas_width, canvas_height)
         canvas_divided = False
 
-        # Create a dictionary to store cumulative histograms for each division
-        cumulative_histograms = {}
+        # Create a dictionary to store cumulative plots on each pad of the canvas
+        cumulative_plot = {}
+        culumative_result = None
 
-        res = None
-        for future in as_completed(future_tasks):
-            if res is None:
-                res = future.result()
-            else:
-                to_merge = future.result()
-                res = reducer(res, to_merge)            
+        # Process the partial results in the order of which they become available in batches
+        for batch in as_completed(future_tasks, with_results=True).batches():
+            for future, result in batch:
+                if culumative_result is None:
+                    culumative_result = result
+                else:
+                    # Continuously reducing the results
+                    culumative_result = reducer(culumative_result, result)
+            
+            # Retrieve the partial results
+            mergeables = culumative_result.mergeables
 
-            mergeables = res.mergeables
-
+            # Divide the canvas according to the number of plots to be generated
             if not canvas_divided:
-                # Divide the canvas into pads based on the number of histograms if not already done
                 c.Divide(canvas_rows, canvas_cols)
                 canvas_divided = True
 
             pad_num = 1
-            for histogram_id in histogram_id_callback_dict.keys():
-                callbacks_list, index = histogram_id_callback_dict[histogram_id]
+            for plot_object_id in plot_object_callback_id_dict.keys():
+                callbacks_list, index, operation_name = plot_object_callback_id_dict[plot_object_id]
+                plot_value = mergeables[index].GetValue()
+                cumulative_plot[index] = plot_value
 
-                h = mergeables[index].GetValue()  
-                cumulative_histograms[index] = h.Clone()
-
-                # Move to the appropriate pad (before executing callbacks that potentially trigger the computation graph)
                 pad = c.cd(pad_num)
 
+                # Apply the callback functions to the plot object 
                 if callbacks_list:
                     for callback in callbacks_list:
-                        callback(cumulative_histograms[index])
+                        callback(cumulative_plot[index])
 
-                cumulative_histograms[index].Draw()
-                # Update the pad
+                # Check the operation type 
+                if operation_name == "Graph":
+                    logging.debug("Got a Graph.")
+                    cumulative_plot[index].Sort()
+                    cumulative_plot[index].Draw("AP")
+                else:
+                    cumulative_plot[index].Draw()
+
                 pad.Update()
                 pad_num += 1
-                
-        c.Close()
-        return res
+      
+        # Close the live visualization canvas canvas
+        c.Close()      
+        return culumative_result
                 
 
     def distribute_unique_paths(self, paths):

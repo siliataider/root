@@ -24,7 +24,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 @singledispatch
 def _append_node_to_actions(operation: Operation, node: Node, actions: List[Node]) -> None:
     """
@@ -105,8 +104,8 @@ class HeadNode(Node, ABC):
         # column names.
         self._localdf = localdf
 
-        # A dictionary where the keys are the histograms and the values are the corresponding callback functions 
-        self.histogram_id_callback_dict: Dict[int, Optional[Callable]] = {}
+        # A dictionary where the keys are the objects to live visualize and the values are the corresponding callback functions 
+        self.plot_object_callback_id_dict: Dict[int, Optional[Callable]] = {}
 
     @property
     def npartitions(self) -> Optional[int]:
@@ -209,19 +208,18 @@ class HeadNode(Node, ABC):
         # List of action nodes in the same order as values
         local_nodes = self._get_action_nodes()
 
-        if self.histogram_id_callback_dict:
+        # Check if live visualization is enabled
+        if self.plot_object_callback_id_dict:
             for i in range(len(local_nodes)):
-                if local_nodes[i].node_id in self.histogram_id_callback_dict:
-                    # Get the current value for the histogram_id
-                    current_value = self.histogram_id_callback_dict[local_nodes[i].node_id]
+                if local_nodes[i].node_id in self.plot_object_callback_id_dict:
+                    # Get the current object's callbacks list
+                    current_value = self.plot_object_callback_id_dict[local_nodes[i].node_id]
                     # Update the value to include the index 'i' as the second element of the tuple
-                    self.histogram_id_callback_dict[local_nodes[i].node_id] = (current_value, i)
-
-            returned_values = self.backend.ProcessAndMergeLive(self._build_ranges(), mapper, distrdf_reducer, self.histogram_id_callback_dict)
-
+                    # and local_nodes[i].operation.name as the third element
+                    self.plot_object_callback_id_dict[local_nodes[i].node_id] = (current_value, i, local_nodes[i].operation.name)
+            returned_values = self.backend.ProcessAndMergeLive(self._build_ranges(), mapper, distrdf_reducer, self.plot_object_callback_id_dict)
         else:
             returned_values = self.backend.ProcessAndMerge(self._build_ranges(), mapper, distrdf_reducer)
-
 
         # Perform any extra checks that may be needed according to the
         # type of the head node

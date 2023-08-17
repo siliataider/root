@@ -105,9 +105,6 @@ def distrdf_mapper(
         raise RuntimeError(f"C++ exception thrown:\n\t{type(e).__name__}: {e.what()}")
 
     ret = TaskResult(mergeables, rdf_plus.entries_in_trees)
-    delay = random.randint(1, 8)
-    time.sleep(delay)
-    print("This worker is done with a delay of: ", delay)
     return ret
 
 

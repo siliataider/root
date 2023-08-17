@@ -84,57 +84,60 @@ def is_callback_safe(callback):
     return True
 
 
-def is_valid_histogram(obj):
+def is_valid_plot_object(obj):
     """
-    Checks if the object is a valid TH1 histogram.
+    Checks if the object is a valid plot object for live visualization.
 
     Args:
         obj: The object to be checked.
 
     Returns:
-        bool: True if the object is a valid TH1 histogram, False otherwise.
+        bool: True if the object is a valid plot object for live visualization, False otherwise.
     """
     import ROOT
 
+    ALLOWED_OPERATIONS = ["Histo1C", "Histo1D", "Histo1F", "Histo1I", "Histo1K", "Histo1S",
+                          "Histo2C", "Histo2D", "Histo2F", "Histo2I", "Histo2S",
+                          "Histo3C", "Histo3D", "Histo3F", "Histo3I", "Histo3S",
+                          "Graph",
+                          "Profile1D", "Profile2D"]
+
     try:
-        if obj.proxied_node.operation.name == "Histo1D":
+        if obj.proxied_node.operation.name in ALLOWED_OPERATIONS:
             return True
-        #return isinstance(obj.GetValue(), ROOT.TH1)
+        
     except:
         return False
 
 
 @singledispatch   
-def live_visualize(histogram_callback_dict: Dict[type, Optional[Callable]], global_callback: Optional[Callable] = None):
+def live_visualize(plot_object_callback_dict: Dict[type, Optional[Callable]], global_callback: Optional[Callable] = None):
     """
-    Enables live visualization for the given histograms by setting the
-    live_visualization_enabled flag of the Headnode to True.
+    Enables live visualization for the given plot objects by setting the
+    by setting the live_plot_object_callback_dict attribute of the Headnode.
 
     Args:
-        histogram_callback_dict (Dict[type, Optional[Callable]]): A dictionary where the keys are
-            the histograms and the values are the corresponding callback functions. The callback
-            functions are optional (can be set to None) if no callback is required for a specific histogram.
+        live_plot_object_callback_dict (Dict[type, Optional[Callable]]): A dictionary where the keys are
+        the plot objects and the values are the corresponding callback functions. The callback
+        functions are optional (can be set to None) if no callback is required for a specific object.
     """
 
     # Import the necessary ROOT classes inside the function to avoid circular dependency
     import ROOT
     from DistRDF import HeadNode
 
-    value = list(histogram_callback_dict)[0].proxied_node.value
-    '''
-    BEFORE > VALUE: None
-    AFTER > VALUE:  Name: exponential2 Title: Exponential distribution NbinsX: 50
-    '''
+    value = list(plot_object_callback_dict)[0].proxied_node.value
+
     if value:
         warnings.warn("live_visualize() should be called before triggering the computation graph. Skipping live visualization.")
 
     else:
-        histogram_id_callback_dict = {}
-        for hist, callback in histogram_callback_dict.items():
+        plot_object_callback_id_dict = {}
+        for hist, callback in plot_object_callback_dict.items():
             callbacks = []
 
-            if not is_valid_histogram(hist):
-                raise ValueError("All elements in the 'histograms' list must be valid ROOT.TH1D histograms. Skipping live visualization.")
+            if not is_valid_plot_object(hist):
+                raise ValueError("All elements in the list must be derived from ROOT's TH1 class. Skipping live visualization.")            
             
             if callback:
                 if callable(callback):
@@ -154,23 +157,23 @@ def live_visualize(histogram_callback_dict: Dict[type, Optional[Callable]], glob
             if global_callback:
                 callbacks.append(global_callback)
 
-            histogram_id_callback_dict[hist.proxied_node.node_id] = callbacks
+            plot_object_callback_id_dict[hist.proxied_node.node_id] = callbacks
 
-        headnode = list(histogram_callback_dict)[0].proxied_node.get_head() # Assuming all hists share the same headnode
-        headnode.histogram_id_callback_dict = histogram_id_callback_dict
+        headnode = list(plot_object_callback_dict)[0].proxied_node.get_head() # Assuming all hists share the same headnode
+        headnode.plot_object_callback_id_dict = plot_object_callback_id_dict
     
 
 @live_visualize.register(list)
-def _1(histograms: List, callback: Optional[Callable] = None):
+def _1(plot_objects: List, callback: Optional[Callable] = None):
 
     # Handle the case where the user passes a list without a dictionary
     if callback is None:
-        histogram_callback_dict = {hist: None for hist in histograms}
+        plot_object_callback_dict = {hist: None for hist in plot_objects}
     else:
-        histogram_callback_dict = {hist: callback for hist in histograms}
+        plot_object_callback_dict = {hist: callback for hist in plot_objects}
 
-    # Call the main live_visualize function with the histogram_callback_dict
-    live_visualize(histogram_callback_dict)
+    # Call the main live_visualize function with the plot_object_callback_dict
+    live_visualize(plot_object_callback_dict)
     
 
 def initialize(fun, *args, **kwargs):
