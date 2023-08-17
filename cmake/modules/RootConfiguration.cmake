@@ -332,16 +332,13 @@ set(dicttype ${ROOT_DICTTYPE})
 find_program(PERL_EXECUTABLE perl)
 set(perl ${PERL_EXECUTABLE})
 
-# --- workaround for Ubuntu 20.04, where snap chrome has problem with arguments translation, to be remove once problem fixed
-find_program(CHROME_EXECUTABLE NAMES chrome PATHS "/snap/chromium/current/usr/lib/chromium-browser/" NO_DEFAULT_PATH)
-
-find_program(CHROME_EXECUTABLE NAMES chrome.exe chromium chromium-browser chrome chrome-browser Google\ Chrome
+find_program(CHROME_EXECUTABLE NAMES chrome.exe chromium chromium-browser chrome chrome-browser google-chrome-stable Google\ Chrome
              PATH_SUFFIXES "Google/Chrome/Application")
 if(CHROME_EXECUTABLE)
   set(chromeexe ${CHROME_EXECUTABLE})
 endif()
 
-find_program(FIREFOX_EXECUTABLE NAMES firefox firefox.exe
+find_program(FIREFOX_EXECUTABLE NAMES firefox firefox-bin firefox.exe
              PATH_SUFFIXES "Mozilla Firefox")
 if(FIREFOX_EXECUTABLE)
   set(firefoxexe ${FIREFOX_EXECUTABLE})
@@ -524,7 +521,6 @@ CHECK_CXX_SOURCE_COMPILES("#include <string_view>
 if(found_stdstringview)
   set(hasstdstringview define)
   if(cuda)
-    if(CUDA_NVCC_EXECUTABLE)
       if (WIN32)
         set(PLATFORM_NULL_FILE "nul")
       else()
@@ -533,13 +529,12 @@ if(found_stdstringview)
       execute_process(
         COMMAND "echo"
           "-e" "#include <string_view>\nint main() { char arr[3] = {'B', 'a', 'r'}; std::string_view strv(arr, sizeof(arr)); return 0;}"
-        COMMAND "${CUDA_NVCC_EXECUTABLE}" "-std=c++${CMAKE_CUDA_STANDARD}" "-o" "${PLATFORM_NULL_FILE}" "-x" "c++" "-"
+        COMMAND "${CMAKE_CUDA_COMPILER}" "-std=c++${CMAKE_CUDA_STANDARD}" "-o" "${PLATFORM_NULL_FILE}" "-x" "c++" "-"
         RESULT_VARIABLE nvcc_compiled_string_view)
       unset(PLATFORM_NULL_FILE CACHE)
       if (nvcc_compiled_string_view EQUAL "0")
         set(cudahasstdstringview define)
       endif()
-    endif()
   endif()
 else()
   set(hasstdstringview undef)

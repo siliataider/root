@@ -13,6 +13,14 @@ if (roofit_multiprocess)
   set(RooFitMPTestStatisticsSources src/TestStatistics/LikelihoodJob.cxx src/TestStatistics/LikelihoodGradientJob.cxx)
 endif()
 
+if(roofit_multiprocess)
+  list(APPEND EXTRA_LIBRARIES RooFitMultiProcess)
+endif()
+
+if(cuda)
+  list(APPEND EXTRA_LIBRARIES RooFitCuda)
+endif()
+
 set (EXTRA_DICT_OPTS)
 if (runtime_cxxmodules AND WIN32)
   set (EXTRA_DICT_OPTS NO_CXXMODULE)
@@ -239,7 +247,6 @@ ROOT_STANDARD_LIBRARY_PACKAGE(RooFitCore
     src/ConstraintHelpers.cxx
     src/BatchModeHelpers.cxx
     src/BatchModeDataHelpers.cxx
-    src/CUDAHelpers.cxx
     src/Buffers.cxx
     src/BidirMMapPipe.cxx
     src/BidirMMapPipe.h
@@ -463,6 +470,7 @@ ROOT_STANDARD_LIBRARY_PACKAGE(RooFitCore
   LIBRARIES
     RooBatchCompute
     RooFitCommon
+    ${EXTRA_LIBRARIES}
   DEPENDENCIES
     Core
     Hist
@@ -479,12 +487,6 @@ ROOT_STANDARD_LIBRARY_PACKAGE(RooFitCore
     inc/LinkDef.h
   ${EXTRA_DICT_OPTS}
 )
-
-if (roofit_multiprocess)
-  target_link_libraries(RooFitCore PRIVATE RooFitMultiProcess)
-  set(RooFitCore_MultiProcess_TestStatistics_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/res")
-  target_include_directories(RooFitCore PRIVATE ${RooFitCore_MultiProcess_TestStatistics_INCLUDE_DIR})
-endif()
 
 # For recent clang, this can facilitate auto-vectorisation.
 # In RooFit, the errno side effect is not needed, anyway:

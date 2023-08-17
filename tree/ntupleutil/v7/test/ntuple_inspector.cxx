@@ -59,9 +59,7 @@ TEST(RNTupleInspector, CompressionSettings)
       ntuple->Fill();
    }
 
-   std::unique_ptr<TFile> file(TFile::Open(fileGuard.GetPath().c_str()));
-   auto ntuple = file->Get<RNTuple>("ntuple");
-   auto inspector = RNTupleInspector::Create(ntuple);
+   auto inspector = RNTupleInspector::Create("ntuple", fileGuard.GetPath());
 
    EXPECT_EQ(505, inspector->GetCompressionSettings());
 }
@@ -83,12 +81,9 @@ TEST(RNTupleInspector, SizeUncompressedSimple)
       }
    }
 
-   std::unique_ptr<TFile> file(TFile::Open(fileGuard.GetPath().c_str()));
-   auto ntuple = file->Get<RNTuple>("ntuple");
-   auto inspector = RNTupleInspector::Create(ntuple);
+   auto inspector = RNTupleInspector::Create("ntuple", fileGuard.GetPath());
 
    EXPECT_EQ(sizeof(int32_t) * 5, inspector->GetInMemorySize());
-
    EXPECT_EQ(inspector->GetOnDiskSize(), inspector->GetInMemorySize());
 }
 
@@ -111,9 +106,7 @@ TEST(RNTupleInspector, SizeUncompressedComplex)
       ntuple->Fill();
    }
 
-   std::unique_ptr<TFile> file(TFile::Open(fileGuard.GetPath().c_str()));
-   auto ntuple = file->Get<RNTuple>("ntuple");
-   auto inspector = RNTupleInspector::Create(ntuple);
+   auto inspector = RNTupleInspector::Create("ntuple", fileGuard.GetPath());
 
    int nIndexCols = inspector->GetColumnTypeCount(ROOT::Experimental::EColumnType::kIndex64);
    int nEntries = inspector->GetDescriptor()->GetNEntries();
@@ -141,9 +134,7 @@ TEST(RNTupleInspector, SizeCompressedInt)
       }
    }
 
-   std::unique_ptr<TFile> file(TFile::Open(fileGuard.GetPath().c_str()));
-   auto ntuple = file->Get<RNTuple>("ntuple");
-   auto inspector = RNTupleInspector::Create(ntuple);
+   auto inspector = RNTupleInspector::Create("ntuple", fileGuard.GetPath());
 
    EXPECT_EQ(sizeof(int32_t) * 50, inspector->GetInMemorySize());
    EXPECT_GT(inspector->GetOnDiskSize(), 0);
@@ -172,9 +163,7 @@ TEST(RNTupleInspector, SizeCompressedComplex)
       }
    }
 
-   std::unique_ptr<TFile> file(TFile::Open(fileGuard.GetPath().c_str()));
-   auto ntuple = file->Get<RNTuple>("ntuple");
-   auto inspector = RNTupleInspector::Create(ntuple);
+   auto inspector = RNTupleInspector::Create("ntuple", fileGuard.GetPath());
 
    EXPECT_GT(inspector->GetOnDiskSize(), 0);
    EXPECT_LT(inspector->GetOnDiskSize(), inspector->GetInMemorySize());
@@ -189,73 +178,10 @@ TEST(RNTupleInspector, SizeEmpty)
       RNTupleWriter::Recreate(std::move(model), "ntuple", fileGuard.GetPath());
    }
 
-   std::unique_ptr<TFile> file(TFile::Open(fileGuard.GetPath().c_str()));
-   auto ntuple = file->Get<RNTuple>("ntuple");
-   auto inspector = RNTupleInspector::Create(ntuple);
+   auto inspector = RNTupleInspector::Create("ntuple", fileGuard.GetPath());
 
    EXPECT_EQ(0, inspector->GetOnDiskSize());
    EXPECT_EQ(0, inspector->GetInMemorySize());
-}
-
-TEST(RNTupleInspector, FieldTypeCount)
-{
-   FileRaii fileGuard("test_ntuple_inspector_field_type_count.root");
-   {
-      auto model = RNTupleModel::Create();
-      auto nFldObject = model->MakeField<ComplexStructUtil>("object");
-      auto nFldInt1 = model->MakeField<std::int32_t>("int1");
-      auto nFldInt2 = model->MakeField<std::int32_t>("int2");
-      auto nFldInt3 = model->MakeField<std::int32_t>("int3");
-      auto nFldString1 = model->MakeField<std::string>("string1");
-      auto nFldString2 = model->MakeField<std::string>("string2");
-
-      auto writeOptions = RNTupleWriteOptions();
-      writeOptions.SetCompression(505);
-      auto ntuple = RNTupleWriter::Recreate(std::move(model), "ntuple", fileGuard.GetPath(), writeOptions);
-   }
-
-   std::unique_ptr<TFile> file(TFile::Open(fileGuard.GetPath().c_str()));
-   auto ntuple = file->Get<RNTuple>("ntuple");
-   auto inspector = RNTupleInspector::Create(ntuple);
-
-   EXPECT_EQ(1, inspector->GetFieldTypeCount("ComplexStructUtil"));
-   EXPECT_EQ(1, inspector->GetFieldTypeCount("ComplexStructUtil", false));
-
-   EXPECT_EQ(1, inspector->GetFieldTypeCount("std::vector<HitUtil>"));
-   EXPECT_EQ(0, inspector->GetFieldTypeCount("std::vector<HitUtil>", false));
-
-   EXPECT_EQ(2, inspector->GetFieldTypeCount("std::vector<.*>"));
-   EXPECT_EQ(0, inspector->GetFieldTypeCount("std::vector<.*>", false));
-
-   EXPECT_EQ(3, inspector->GetFieldTypeCount("BaseUtil"));
-   EXPECT_EQ(0, inspector->GetFieldTypeCount("BaseUtil", false));
-
-   EXPECT_EQ(6, inspector->GetFieldTypeCount("std::int32_t"));
-   EXPECT_EQ(3, inspector->GetFieldTypeCount("std::int32_t", false));
-
-   EXPECT_EQ(4, inspector->GetFieldTypeCount("float"));
-   EXPECT_EQ(0, inspector->GetFieldTypeCount("float", false));
-}
-
-TEST(RNTupleInspector, ColumnTypeCount)
-{
-   FileRaii fileGuard("test_ntuple_inspector_column_type_count.root");
-   {
-      auto model = RNTupleModel::Create();
-      auto nFldObject = model->MakeField<ComplexStructUtil>("object");
-
-      auto writeOptions = RNTupleWriteOptions();
-      writeOptions.SetCompression(505);
-      auto ntuple = RNTupleWriter::Recreate(std::move(model), "ntuple", fileGuard.GetPath(), writeOptions);
-   }
-
-   std::unique_ptr<TFile> file(TFile::Open(fileGuard.GetPath().c_str()));
-   auto ntuple = file->Get<RNTuple>("ntuple");
-   auto inspector = RNTupleInspector::Create(ntuple);
-
-   EXPECT_EQ(2, inspector->GetColumnTypeCount(ROOT::Experimental::EColumnType::kSplitIndex64));
-   EXPECT_EQ(4, inspector->GetColumnTypeCount(ROOT::Experimental::EColumnType::kSplitReal32));
-   EXPECT_EQ(3, inspector->GetColumnTypeCount(ROOT::Experimental::EColumnType::kSplitInt32));
 }
 
 TEST(RNTupleInspector, ColumnInfoCompressed)
@@ -279,9 +205,7 @@ TEST(RNTupleInspector, ColumnInfoCompressed)
       }
    }
 
-   std::unique_ptr<TFile> file(TFile::Open(fileGuard.GetPath().c_str()));
-   auto ntuple = file->Get<RNTuple>("ntuple");
-   auto inspector = RNTupleInspector::Create(ntuple);
+   auto inspector = RNTupleInspector::Create("ntuple", fileGuard.GetPath());
 
    std::uint64_t totalOnDiskSize = 0;
 
@@ -325,9 +249,7 @@ TEST(RNTupleInspector, ColumnInfoUncompressed)
       }
    }
 
-   std::unique_ptr<TFile> file(TFile::Open(fileGuard.GetPath().c_str()));
-   auto ntuple = file->Get<RNTuple>("ntuple");
-   auto inspector = RNTupleInspector::Create(ntuple);
+   auto inspector = RNTupleInspector::Create("ntuple", fileGuard.GetPath());
 
    std::uint64_t colTypeSizes[] = {sizeof(std::int32_t), sizeof(double)};
 
@@ -336,6 +258,61 @@ TEST(RNTupleInspector, ColumnInfoUncompressed)
       EXPECT_EQ(colInfo.GetOnDiskSize(), colInfo.GetInMemorySize());
       EXPECT_EQ(colInfo.GetOnDiskSize(), colTypeSizes[i] * 5);
    }
+}
+
+TEST(RNTupleInspector, ColumnTypeCount)
+{
+   FileRaii fileGuard("test_ntuple_inspector_column_type_count.root");
+   {
+      auto model = RNTupleModel::Create();
+      auto nFldObject = model->MakeField<ComplexStructUtil>("object");
+
+      auto writeOptions = RNTupleWriteOptions();
+      writeOptions.SetCompression(505);
+      auto ntuple = RNTupleWriter::Recreate(std::move(model), "ntuple", fileGuard.GetPath(), writeOptions);
+   }
+
+   auto inspector = RNTupleInspector::Create("ntuple", fileGuard.GetPath());
+
+   EXPECT_EQ(2, inspector->GetColumnTypeCount(ROOT::Experimental::EColumnType::kSplitIndex64));
+   EXPECT_EQ(4, inspector->GetColumnTypeCount(ROOT::Experimental::EColumnType::kSplitReal32));
+   EXPECT_EQ(3, inspector->GetColumnTypeCount(ROOT::Experimental::EColumnType::kSplitInt32));
+}
+
+TEST(RNTupleInspector, ColumnsByType)
+{
+   FileRaii fileGuard("test_ntuple_inspector_columns_by_type.root");
+   {
+      auto model = RNTupleModel::Create();
+      auto nFldInt1 = model->MakeField<std::int64_t>("int1");
+      auto nFldInt2 = model->MakeField<std::int64_t>("int2");
+      auto nFldFloat = model->MakeField<float>("float");
+      auto nFldFloatVec = model->MakeField<std::vector<float>>("floatVec");
+
+      auto writeOptions = RNTupleWriteOptions();
+      writeOptions.SetCompression(505);
+      auto ntuple = RNTupleWriter::Recreate(std::move(model), "ntuple", fileGuard.GetPath(), writeOptions);
+   }
+
+   auto inspector = RNTupleInspector::Create("ntuple", fileGuard.GetPath());
+
+   EXPECT_EQ(2U, inspector->GetColumnsByType(ROOT::Experimental::EColumnType::kSplitInt64).size());
+   for (const auto colId : inspector->GetColumnsByType(ROOT::Experimental::EColumnType::kSplitInt64)) {
+      EXPECT_EQ(ROOT::Experimental::EColumnType::kSplitInt64, inspector->GetColumnInfo(colId).GetType());
+   }
+
+   EXPECT_EQ(2U, inspector->GetColumnsByType(ROOT::Experimental::EColumnType::kSplitReal32).size());
+   for (const auto colId : inspector->GetColumnsByType(ROOT::Experimental::EColumnType::kSplitReal32)) {
+      EXPECT_EQ(ROOT::Experimental::EColumnType::kSplitReal32, inspector->GetColumnInfo(colId).GetType());
+   }
+
+   EXPECT_EQ(1U, inspector->GetColumnsByType(ROOT::Experimental::EColumnType::kSplitIndex64).size());
+   EXPECT_EQ(1U, inspector->GetColumnsByType(ROOT::Experimental::EColumnType::kSplitIndex64).size());
+   for (const auto colId : inspector->GetColumnsByType(ROOT::Experimental::EColumnType::kSplitIndex64)) {
+      EXPECT_EQ(ROOT::Experimental::EColumnType::kSplitIndex64, inspector->GetColumnInfo(colId).GetType());
+   }
+
+   EXPECT_EQ(0U, inspector->GetColumnsByType(ROOT::Experimental::EColumnType::kSplitReal64).size());
 }
 
 TEST(RNTupleInspector, FieldInfoCompressed)
@@ -359,9 +336,7 @@ TEST(RNTupleInspector, FieldInfoCompressed)
       }
    }
 
-   std::unique_ptr<TFile> file(TFile::Open(fileGuard.GetPath().c_str()));
-   auto ntuple = file->Get<RNTuple>("ntuple");
-   auto inspector = RNTupleInspector::Create(ntuple);
+   auto inspector = RNTupleInspector::Create("ntuple", fileGuard.GetPath());
 
    auto topFieldInfo = inspector->GetFieldTreeInfo("object");
 
@@ -406,9 +381,7 @@ TEST(RNTupleInspector, FieldInfoUncompressed)
       }
    }
 
-   std::unique_ptr<TFile> file(TFile::Open(fileGuard.GetPath().c_str()));
-   auto ntuple = file->Get<RNTuple>("ntuple");
-   auto inspector = RNTupleInspector::Create(ntuple);
+   auto inspector = RNTupleInspector::Create("ntuple", fileGuard.GetPath());
 
    auto topFieldInfo = inspector->GetFieldTreeInfo("object");
 
@@ -427,6 +400,44 @@ TEST(RNTupleInspector, FieldInfoUncompressed)
    EXPECT_EQ(topFieldInfo.GetInMemorySize(), subFieldInMemorySize);
 }
 
+TEST(RNTupleInspector, FieldTypeCount)
+{
+   FileRaii fileGuard("test_ntuple_inspector_field_type_count.root");
+   {
+      auto model = RNTupleModel::Create();
+      auto nFldObject = model->MakeField<ComplexStructUtil>("object");
+      auto nFldInt1 = model->MakeField<std::int32_t>("int1");
+      auto nFldInt2 = model->MakeField<std::int32_t>("int2");
+      auto nFldInt3 = model->MakeField<std::int32_t>("int3");
+      auto nFldString1 = model->MakeField<std::string>("string1");
+      auto nFldString2 = model->MakeField<std::string>("string2");
+
+      auto writeOptions = RNTupleWriteOptions();
+      writeOptions.SetCompression(505);
+      auto ntuple = RNTupleWriter::Recreate(std::move(model), "ntuple", fileGuard.GetPath(), writeOptions);
+   }
+
+   auto inspector = RNTupleInspector::Create("ntuple", fileGuard.GetPath());
+
+   EXPECT_EQ(1, inspector->GetFieldTypeCount("ComplexStructUtil"));
+   EXPECT_EQ(1, inspector->GetFieldTypeCount("ComplexStructUtil", false));
+
+   EXPECT_EQ(1, inspector->GetFieldTypeCount("std::vector<HitUtil>"));
+   EXPECT_EQ(0, inspector->GetFieldTypeCount("std::vector<HitUtil>", false));
+
+   EXPECT_EQ(2, inspector->GetFieldTypeCount("std::vector<.*>"));
+   EXPECT_EQ(0, inspector->GetFieldTypeCount("std::vector<.*>", false));
+
+   EXPECT_EQ(3, inspector->GetFieldTypeCount("BaseUtil"));
+   EXPECT_EQ(0, inspector->GetFieldTypeCount("BaseUtil", false));
+
+   EXPECT_EQ(6, inspector->GetFieldTypeCount("std::int32_t"));
+   EXPECT_EQ(3, inspector->GetFieldTypeCount("std::int32_t", false));
+
+   EXPECT_EQ(4, inspector->GetFieldTypeCount("float"));
+   EXPECT_EQ(0, inspector->GetFieldTypeCount("float", false));
+}
+
 TEST(RNTupleInspector, FieldsByName)
 {
    FileRaii fileGuard("test_ntuple_inspector_fields_by_name.root");
@@ -443,9 +454,7 @@ TEST(RNTupleInspector, FieldsByName)
       auto ntuple = RNTupleWriter::Recreate(std::move(model), "ntuple", fileGuard.GetPath(), writeOptions);
    }
 
-   std::unique_ptr<TFile> file(TFile::Open(fileGuard.GetPath().c_str()));
-   auto ntuple = file->Get<RNTuple>("ntuple");
-   auto inspector = RNTupleInspector::Create(ntuple);
+   auto inspector = RNTupleInspector::Create("ntuple", fileGuard.GetPath());
 
    auto intFieldIds = inspector->GetFieldsByName("int.");
 

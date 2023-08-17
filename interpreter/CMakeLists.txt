@@ -237,6 +237,8 @@ if(builtin_llvm)
   #---Set into parent scope LLVM_VERSION --------------------------------------------------------------
   get_directory_property(_llvm_version DIRECTORY llvm-project/llvm DEFINITION LLVM_VERSION)
   set(LLVM_VERSION "${_llvm_version}" PARENT_SCOPE)
+  #---Forward TARGET_TRIPLE for check-cling------------------------------------------------------------
+  get_directory_property(TARGET_TRIPLE DIRECTORY llvm-project/llvm DEFINITION TARGET_TRIPLE)
 else()
   # Rely on llvm-config.
   set(CONFIG_OUTPUT)
@@ -343,7 +345,7 @@ else()
   if (${PACKAGE_VERSION} MATCHES "${ROOT_LLVM_VERSION_REQUIRED_MAJOR}\\.0(|\\.[0-9]+)")
     message(STATUS "Using LLVM external library - ${PACKAGE_VERSION}")
   else()
-    message(FATAL_ERROR "LLVM version different from ROOT supported, please try ${ROOT_LLVM_VERSION_REQUIRED_MAJOR}.0.x")
+    message(FATAL_ERROR "LLVM version ${LLVM_PACKAGE_VERSION} different from ROOT supported, please try ${ROOT_LLVM_VERSION_REQUIRED_MAJOR}.0.x")
   endif()
 
   if (NOT DEFINED LLVM_INCLUDE_TESTS)
@@ -440,6 +442,9 @@ Please install Python or specify the PYTHON_EXECUTABLE CMake variable.")
     # install-clang-cpp target defined by LLVM's cmake module
     set(CLANG_LINKS_TO_CREATE clang++ clang-cl)
 
+    # Disable linking against shared LLVM
+    set(LLVM_LINK_LLVM_DYLIB OFF)
+
     add_subdirectory(llvm-project/clang EXCLUDE_FROM_ALL)
   endif(builtin_clang)
 
@@ -500,6 +505,7 @@ if (builtin_cling)
     string(APPEND CMAKE_C_FLAGS " -fPIC")
   endif(LLVM_ENABLE_PIC AND NOT MSVC)
   # Avoid cling being installed under ROOTSYS/include.
+  set(CLING_ROOT_BUILD ON)
   add_subdirectory(cling EXCLUDE_FROM_ALL)
   add_dependencies(CLING ${CLING_LIBRARIES})
 

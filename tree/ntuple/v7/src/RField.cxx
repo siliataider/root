@@ -183,6 +183,8 @@ std::string GetNormalizedTypeName(const std::string &typeName)
       normalizedType = "std::" + normalizedType;
    if (normalizedType.substr(0, 11) == "unique_ptr<")
       normalizedType = "std::" + normalizedType;
+   if (normalizedType.substr(0, 4) == "set<")
+      normalizedType = "std::" + normalizedType;
 
    return normalizedType;
 }
@@ -441,6 +443,12 @@ ROOT::Experimental::Detail::RFieldBase::Create(const std::string &fieldName, con
       auto normalizedInnerTypeName = itemField->GetType();
       result = std::make_unique<RUniquePtrField>(fieldName, "std::unique_ptr<" + normalizedInnerTypeName + ">",
                                                  std::move(itemField));
+   } else if (canonicalType.substr(0, 9) == "std::set<") {
+      std::string itemTypeName = canonicalType.substr(9, canonicalType.length() - 10);
+      auto itemField = Create("_0", itemTypeName).Unwrap();
+      auto normalizedInnerTypeName = itemField->GetType();
+      result =
+         std::make_unique<RSetField>(fieldName, "std::set<" + normalizedInnerTypeName + ">", std::move(itemField));
    } else if (canonicalType == ":Collection:") {
       // TODO: create an RCollectionField?
       result = std::make_unique<RField<ClusterSize_t>>(fieldName);
@@ -468,7 +476,7 @@ ROOT::Experimental::Detail::RFieldBase::Create(const std::string &fieldName, con
       auto cl = TClass::GetClass(canonicalType.c_str());
       if (cl != nullptr) {
          if (cl->GetCollectionProxy())
-            result = std::make_unique<RCollectionClassField>(fieldName, canonicalType);
+            result = std::make_unique<RProxiedCollectionField>(fieldName, canonicalType);
          else
             result = std::make_unique<RClassField>(fieldName, canonicalType);
       }
@@ -1227,7 +1235,7 @@ ROOT::Experimental::RClassField::RClassField(std::string_view fieldName, std::st
    }
    if (fClass->GetCollectionProxy()) {
       throw RException(
-         R__FAIL(std::string(className) + " has an associated collection proxy; use RCollectionClassField instead"));
+         R__FAIL(std::string(className) + " has an associated collection proxy; use RProxiedCollectionField instead"));
    }
 
    if (!(fClass->ClassProperty() & kClassHasExplicitCtor))
@@ -1456,9 +1464,9 @@ void ROOT::Experimental::REnumField::AcceptVisitor(Detail::RFieldVisitor &visito
 
 //------------------------------------------------------------------------------
 
-ROOT::Experimental::RCollectionClassField::RCollectionIterableOnce::RIteratorFuncs
-ROOT::Experimental::RCollectionClassField::RCollectionIterableOnce::GetIteratorFuncs(TVirtualCollectionProxy *proxy,
-                                                                                     bool readFromDisk)
+ROOT::Experimental::RProxiedCollectionField::RCollectionIterableOnce::RIteratorFuncs
+ROOT::Experimental::RProxiedCollectionField::RCollectionIterableOnce::GetIteratorFuncs(TVirtualCollectionProxy *proxy,
+                                                                                       bool readFromDisk)
 {
    RIteratorFuncs ifuncs;
    ifuncs.fCreateIterators = proxy->GetFunctionCreateIterators(readFromDisk);
@@ -1469,33 +1477,49 @@ ROOT::Experimental::RCollectionClassField::RCollectionIterableOnce::GetIteratorF
    return ifuncs;
 }
 
-ROOT::Experimental::RCollectionClassField::RCollectionClassField(std::string_view fieldName, std::string_view className)
-   : RCollectionClassField(fieldName, className, TClass::GetClass(std::string(className).c_str()))
-{
-}
-
-ROOT::Experimental::RCollectionClassField::RCollectionClassField(std::string_view fieldName, std::string_view className,
-                                                                 TClass *classp)
-   : ROOT::Experimental::Detail::RFieldBase(fieldName, className, ENTupleStructure::kCollection, false /* isSimple */),
-     fNWritten(0)
+ROOT::Experimental::RProxiedCollectionField::RProxiedCollectionField(std::string_view fieldName,
+                                                                     std::string_view typeName, TClass *classp)
+   : Detail::RFieldBase(fieldName, typeName, ENTupleStructure::kCollection, false /* isSimple */), fNWritten(0)
 {
    if (classp == nullptr)
-      throw RException(R__FAIL("RField: no I/O support for collection proxy type " + std::string(className)));
+      throw RException(R__FAIL("RField: no I/O support for collection proxy type " + std::string(typeName)));
    if (!classp->GetCollectionProxy())
-      throw RException(R__FAIL(std::string(className) + " has no associated collection proxy"));
+      throw RException(R__FAIL(std::string(typeName) + " has no associated collection proxy"));
 
    fProxy.reset(classp->GetCollectionProxy()->Generate());
    fProperties = fProxy->GetProperties();
    fCollectionType = fProxy->GetCollectionType();
    if (fProxy->HasPointers())
       throw RException(R__FAIL("collection proxies whose value type is a pointer are not supported"));
-   if (fProperties & TVirtualCollectionProxy::kIsAssociative)
-      throw RException(R__FAIL("associative collections not supported"));
+   if (!fProxy->GetCollectionClass()->HasDictionary()) {
+      throw RException(R__FAIL("dictionary not available for type " +
+                               GetNormalizedTypeName(fProxy->GetCollectionClass()->GetName())));
+   }
 
    fIFuncsRead = RCollectionIterableOnce::GetIteratorFuncs(fProxy.get(), true /* readFromDisk */);
    fIFuncsWrite = RCollectionIterableOnce::GetIteratorFuncs(fProxy.get(), false /* readFromDisk */);
+}
+
+ROOT::Experimental::RProxiedCollectionField::RProxiedCollectionField(std::string_view fieldName,
+                                                                     std::string_view typeName,
+                                                                     std::unique_ptr<Detail::RFieldBase> itemField)
+   : RProxiedCollectionField(fieldName, typeName, TClass::GetClass(std::string(typeName).c_str()))
+{
+   fItemSize = itemField->GetValueSize();
+   Attach(std::move(itemField));
+}
+
+ROOT::Experimental::RProxiedCollectionField::RProxiedCollectionField(std::string_view fieldName,
+                                                                     std::string_view typeName)
+   : RProxiedCollectionField(fieldName, typeName, TClass::GetClass(std::string(typeName).c_str()))
+{
+   // TODO(jalopezg, fdegeus) Full support for associative collections (both custom and STL) will be handled in a
+   // follow-up PR.
+   if (fProperties & TVirtualCollectionProxy::kIsAssociative)
+      throw RException(R__FAIL("custom associative collection proxies not supported"));
 
    std::unique_ptr<ROOT::Experimental::Detail::RFieldBase> itemField;
+
    if (auto valueClass = fProxy->GetValueClass()) {
       // Element type is a class
       itemField = RFieldBase::Create("_0", valueClass->GetName()).Unwrap();
@@ -1522,20 +1546,20 @@ ROOT::Experimental::RCollectionClassField::RCollectionClassField(std::string_vie
          throw RException(R__FAIL("unsupported value type"));
       }
    }
+
    fItemSize = itemField->GetValueSize();
    Attach(std::move(itemField));
 }
 
 std::unique_ptr<ROOT::Experimental::Detail::RFieldBase>
-ROOT::Experimental::RCollectionClassField::CloneImpl(std::string_view newName) const
+ROOT::Experimental::RProxiedCollectionField::CloneImpl(std::string_view newName) const
 {
-   auto result = std::unique_ptr<RCollectionClassField>(
-      new RCollectionClassField(newName, GetType(), fProxy->GetCollectionClass()));
-   SyncFieldIDs(*this, *result);
-   return result;
+   auto newItemField = fSubFields[0]->Clone(fSubFields[0]->GetName());
+   return std::unique_ptr<RProxiedCollectionField>(
+      new RProxiedCollectionField(newName, GetType(), std::move(newItemField)));
 }
 
-std::size_t ROOT::Experimental::RCollectionClassField::AppendImpl(const void *from)
+std::size_t ROOT::Experimental::RProxiedCollectionField::AppendImpl(const void *from)
 {
    std::size_t nbytes = 0;
    unsigned count = 0;
@@ -1551,7 +1575,7 @@ std::size_t ROOT::Experimental::RCollectionClassField::AppendImpl(const void *fr
    return nbytes + fColumns[0]->GetElement()->GetPackedSize();
 }
 
-void ROOT::Experimental::RCollectionClassField::ReadGlobalImpl(NTupleSize_t globalIndex, void *to)
+void ROOT::Experimental::RProxiedCollectionField::ReadGlobalImpl(NTupleSize_t globalIndex, void *to)
 {
    ClusterSize_t nItems;
    RClusterIndex collectionStart;
@@ -1571,7 +1595,7 @@ void ROOT::Experimental::RCollectionClassField::ReadGlobalImpl(NTupleSize_t glob
 }
 
 const ROOT::Experimental::Detail::RFieldBase::RColumnRepresentations &
-ROOT::Experimental::RCollectionClassField::GetColumnRepresentations() const
+ROOT::Experimental::RProxiedCollectionField::GetColumnRepresentations() const
 {
    static RColumnRepresentations representations(
       {{EColumnType::kSplitIndex64}, {EColumnType::kIndex64}, {EColumnType::kSplitIndex32}, {EColumnType::kIndex32}},
@@ -1579,23 +1603,23 @@ ROOT::Experimental::RCollectionClassField::GetColumnRepresentations() const
    return representations;
 }
 
-void ROOT::Experimental::RCollectionClassField::GenerateColumnsImpl()
+void ROOT::Experimental::RProxiedCollectionField::GenerateColumnsImpl()
 {
    fColumns.emplace_back(Detail::RColumn::Create<ClusterSize_t>(RColumnModel(GetColumnRepresentative()[0]), 0));
 }
 
-void ROOT::Experimental::RCollectionClassField::GenerateColumnsImpl(const RNTupleDescriptor &desc)
+void ROOT::Experimental::RProxiedCollectionField::GenerateColumnsImpl(const RNTupleDescriptor &desc)
 {
    auto onDiskTypes = EnsureCompatibleColumnTypes(desc);
    fColumns.emplace_back(Detail::RColumn::Create<ClusterSize_t>(RColumnModel(onDiskTypes[0]), 0));
 }
 
-void ROOT::Experimental::RCollectionClassField::GenerateValue(void *where) const
+void ROOT::Experimental::RProxiedCollectionField::GenerateValue(void *where) const
 {
    fProxy->New(where);
 }
 
-void ROOT::Experimental::RCollectionClassField::DestroyValue(void *objPtr, bool dtorOnly) const
+void ROOT::Experimental::RProxiedCollectionField::DestroyValue(void *objPtr, bool dtorOnly) const
 {
    if (fProperties & TVirtualCollectionProxy::kNeedDelete) {
       TVirtualCollectionProxy::TPushPop RAII(fProxy.get(), objPtr);
@@ -1609,7 +1633,7 @@ void ROOT::Experimental::RCollectionClassField::DestroyValue(void *objPtr, bool 
 }
 
 std::vector<ROOT::Experimental::Detail::RFieldBase::RValue>
-ROOT::Experimental::RCollectionClassField::SplitValue(const RValue &value) const
+ROOT::Experimental::RProxiedCollectionField::SplitValue(const RValue &value) const
 {
    std::vector<RValue> result;
    TVirtualCollectionProxy::TPushPop RAII(fProxy.get(), value.GetRawPtr());
@@ -1620,14 +1644,14 @@ ROOT::Experimental::RCollectionClassField::SplitValue(const RValue &value) const
    return result;
 }
 
-void ROOT::Experimental::RCollectionClassField::CommitCluster()
+void ROOT::Experimental::RProxiedCollectionField::CommitCluster()
 {
    fNWritten = 0;
 }
 
-void ROOT::Experimental::RCollectionClassField::AcceptVisitor(Detail::RFieldVisitor &visitor) const
+void ROOT::Experimental::RProxiedCollectionField::AcceptVisitor(Detail::RFieldVisitor &visitor) const
 {
-   visitor.VisitCollectionClassField(*this);
+   visitor.VisitProxiedCollectionField(*this);
 }
 
 //------------------------------------------------------------------------------
@@ -1919,8 +1943,9 @@ void ROOT::Experimental::RRVecField::ReadGlobalImpl(NTupleSize_t globalIndex, vo
 
    // See "semantics of reading non-trivial objects" in RNTuple's architecture.md for details
    // on the element construction/destrution.
+   const bool owns = (*capacityPtr != -1);
    const bool needsConstruct = !(fSubFields[0]->GetTraits() & kTraitTriviallyConstructible);
-   const bool needsDestruct = !(fSubFields[0]->GetTraits() & kTraitTriviallyDestructible);
+   const bool needsDestruct = owns && !(fSubFields[0]->GetTraits() & kTraitTriviallyDestructible);
 
    // Destroy excess elements, if any
    if (needsDestruct) {
@@ -1940,7 +1965,10 @@ void ROOT::Experimental::RRVecField::ReadGlobalImpl(NTupleSize_t globalIndex, vo
       }
 
       // TODO Increment capacity by a factor rather than just enough to fit the elements.
-      free(*beginPtr);
+      if (owns) {
+         // *beginPtr points to the array of item values (allocated in an earlier call by the following malloc())
+         free(*beginPtr);
+      }
       // We trust that malloc returns a buffer with large enough alignment.
       // This might not be the case if T in RVec<T> is over-aligned.
       *beginPtr = malloc(nItems * fItemSize);
@@ -1966,6 +1994,69 @@ void ROOT::Experimental::RRVecField::ReadGlobalImpl(NTupleSize_t globalIndex, vo
    for (std::size_t i = 0; i < nItems; ++i) {
       CallReadOn(*fSubFields[0], collectionStart + i, begin + (i * fItemSize));
    }
+}
+
+std::size_t ROOT::Experimental::RRVecField::ReadBulkImpl(const RBulkSpec &bulkSpec)
+{
+   if (!fSubFields[0]->IsSimple())
+      return RFieldBase::ReadBulkImpl(bulkSpec);
+
+   if (bulkSpec.fAuxData->empty()) {
+      /// Initialize auxiliary memory: the first sizeof(size_t) bytes store the value size of the item field.
+      /// The following bytes store the item values, consecutively.
+      bulkSpec.fAuxData->resize(sizeof(std::size_t));
+      *reinterpret_cast<std::size_t *>(bulkSpec.fAuxData->data()) = fSubFields[0]->GetValueSize();
+   }
+   const auto itemValueSize = *reinterpret_cast<std::size_t *>(bulkSpec.fAuxData->data());
+   unsigned char *itemValueArray = bulkSpec.fAuxData->data() + sizeof(std::size_t);
+   auto [beginPtr, sizePtr, _] = GetRVecDataMembers(bulkSpec.fValues);
+
+   // Get size of the first RVec of the bulk
+   RClusterIndex firstItemIndex;
+   RClusterIndex collectionStart;
+   ClusterSize_t collectionSize;
+   this->GetCollectionInfo(bulkSpec.fFirstIndex, &firstItemIndex, &collectionSize);
+   *beginPtr = itemValueArray;
+   *sizePtr = collectionSize;
+
+   // Set the size of the remaining RVecs of the bulk, going page by page through the RNTuple offset column.
+   // We optimistically assume that bulkSpec.fAuxData is already large enough to hold all the item values in the
+   // given range. If not, we'll fix up the pointers afterwards.
+   auto lastOffset = firstItemIndex.GetIndex() + collectionSize;
+   ClusterSize_t::ValueType nRemainingValues = bulkSpec.fCount - 1;
+   std::size_t nValues = 1;
+   std::size_t nItems = collectionSize;
+   while (nRemainingValues > 0) {
+      NTupleSize_t nElementsUntilPageEnd;
+      const auto offsets = fPrincipalColumn->MapV<ClusterSize_t>(bulkSpec.fFirstIndex + nValues, nElementsUntilPageEnd);
+      const std::size_t nBatch = std::min(nRemainingValues, nElementsUntilPageEnd);
+      for (std::size_t i = 0; i < nBatch; ++i) {
+         const auto size = offsets[i] - lastOffset;
+         std::tie(beginPtr, sizePtr, _) = GetRVecDataMembers(
+            reinterpret_cast<unsigned char *>(bulkSpec.fValues) + (nValues + i) * fValueSize);
+         *beginPtr = itemValueArray + nItems * itemValueSize;
+         *sizePtr = size;
+
+         nItems += size;
+         lastOffset = offsets[i];
+      }
+      nRemainingValues -= nBatch;
+      nValues += nBatch;
+   }
+
+   bulkSpec.fAuxData->resize(sizeof(std::size_t) + nItems * itemValueSize);
+   // If the vector got reallocated, we need to fix-up the RVecs begin pointers.
+   const auto delta = itemValueArray - (bulkSpec.fAuxData->data() + sizeof(std::size_t));
+   if (delta != 0) {
+      auto beginPtrAsUChar = reinterpret_cast<unsigned char *>(bulkSpec.fValues);
+      for (std::size_t i = 0; i < bulkSpec.fCount; ++i) {
+         *reinterpret_cast<unsigned char **>(beginPtrAsUChar) -= delta;
+         beginPtrAsUChar += fValueSize;
+      }
+   }
+
+   GetPrincipalColumnOf(*fSubFields[0])->ReadV(firstItemIndex, nItems, itemValueArray - delta);
+   return RBulkSpec::kAllSet;
 }
 
 const ROOT::Experimental::Detail::RFieldBase::RColumnRepresentations &
@@ -1994,7 +2085,7 @@ void ROOT::Experimental::RRVecField::GenerateValue(void *where) const
    // currently the inline buffer is left uninitialized
    void **beginPtr = new (where)(void *)(nullptr);
    std::int32_t *sizePtr = new (reinterpret_cast<void *>(beginPtr + 1)) std::int32_t(0);
-   new (sizePtr + 1) std::int32_t(0);
+   new (sizePtr + 1) std::int32_t(-1);
 }
 
 void ROOT::Experimental::RRVecField::DestroyValue(void *objPtr, bool dtorOnly) const
@@ -2470,6 +2561,21 @@ size_t ROOT::Experimental::RVariantField::GetValueSize() const
 void ROOT::Experimental::RVariantField::CommitCluster()
 {
    std::fill(fNWritten.begin(), fNWritten.end(), 0);
+}
+
+//------------------------------------------------------------------------------
+
+ROOT::Experimental::RSetField::RSetField(std::string_view fieldName, std::string_view typeName,
+                                         std::unique_ptr<Detail::RFieldBase> itemField)
+   : ROOT::Experimental::RProxiedCollectionField(fieldName, typeName, std::move(itemField))
+{
+}
+
+std::unique_ptr<ROOT::Experimental::Detail::RFieldBase>
+ROOT::Experimental::RSetField::CloneImpl(std::string_view newName) const
+{
+   auto newItemField = fSubFields[0]->Clone(fSubFields[0]->GetName());
+   return std::unique_ptr<RSetField>(new RSetField(newName, GetType(), std::move(newItemField)));
 }
 
 //------------------------------------------------------------------------------

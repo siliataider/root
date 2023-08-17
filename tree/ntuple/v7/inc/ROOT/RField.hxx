@@ -37,6 +37,7 @@
 #include <iterator>
 #include <memory>
 #include <new>
+#include <set>
 #include <string>
 #include <type_traits>
 #include <typeinfo>
@@ -69,7 +70,7 @@ class RPageStorage;
 
 // clang-format off
 /**
-\class ROOT::Experimental::RFieldBase
+\class ROOT::Experimental::Detail::RFieldBase
 \ingroup NTuple
 \brief A field translates read and write calls from/to underlying columns to/from tree values
 
@@ -191,6 +192,10 @@ public:
       std::unique_ptr<bool[]> fMaskAvail; ///< Masks invalid values in the array
       std::size_t fNValidValues = 0;      ///< The sum of non-zero elements in the fMask
       RClusterIndex fFirstIndex;          ///< Index of the first value of the array
+      /// Reading arrays of complex values may require additional memory, for instance for the elements of
+      /// arrays of vectors. A pointer to the fAuxData array is passed to the field's BulkRead method.
+      /// The RBulk class does not modify the array in-between calls to the field's BulkRead method.
+      std::vector<unsigned char> fAuxData;
 
       void ReleaseValues();
       /// Sets a new range for the bulk. If there is enough capacity, the fValues array will be reused.
@@ -241,6 +246,7 @@ public:
          bulkSpec.fMaskReq = maskReq;
          bulkSpec.fMaskAvail = &fMaskAvail[offset];
          bulkSpec.fValues = GetValuePtrAt(offset);
+         bulkSpec.fAuxData = &fAuxData;
          auto nRead = fField->ReadBulk(bulkSpec);
          if (nRead == RBulkSpec::kAllSet) {
             if ((offset == 0) && (size == fSize)) {
@@ -303,6 +309,9 @@ protected:
       bool *fMaskAvail = nullptr; ///< A bool array of size fCount, indicating the valid values in fValues
       /// The destination area, which has to be a big enough array of valid objects of the correct type
       void *fValues = nullptr;
+      /// Reference to memory owned by the RBulk class. The field implementing BulkReadImpl may use fAuxData
+      /// as memory that stays persistent between calls.
+      std::vector<unsigned char> *fAuxData = nullptr;
    };
 
    /// Collections and classes own sub fields
@@ -435,6 +444,9 @@ protected:
       other.Read(clusterIndex, to);
    }
    static void CallReadOn(RFieldBase &other, NTupleSize_t globalIndex, void *to) { other.Read(globalIndex, to); }
+
+   /// Fields may need direct access to the principal column of their sub fields, e.g. in RRVecField::ReadBulk
+   static RColumn *GetPrincipalColumnOf(const RFieldBase &other) { return other.fPrincipalColumn; }
 
    /// Set a user-defined function to be called after reading a value, giving a chance to inspect and/or modify the
    /// value object.
@@ -718,14 +730,15 @@ public:
 
 /// The field for a class representing a collection of elements via `TVirtualCollectionProxy`.
 /// Objects of such type behave as collections that can be accessed through the corresponding member functions in
-/// `TVirtualCollectionProxy`. At a bare minimum, the user is required to provide an implementation for the following
-/// functions in `TVirtualCollectionProxy`: `HasPointers()`, `GetProperties()`, `GetValueClass()`, `GetType()`,
-/// `PushProxy()`, `PopProxy()`, `GetFunctionCreateIterators()`, `GetFunctionNext()`, and
-/// `GetFunctionDeleteTwoIterators()`.
+/// `TVirtualCollectionProxy`. For STL collections, these proxies are provided. Custom classes need to implement the
+/// corresponding member functions in `TVirtualCollectionProxy`. At a bare minimum, the user is required to provide an
+/// implementation for the following functions in `TVirtualCollectionProxy`: `HasPointers()`, `GetProperties()`,
+/// `GetValueClass()`, `GetType()`, `PushProxy()`, `PopProxy()`, `GetFunctionCreateIterators()`, `GetFunctionNext()`,
+/// and `GetFunctionDeleteTwoIterators()`.
 ///
 /// The collection proxy for a given class can be set via `TClass::CopyCollectionProxy()`.
-class RCollectionClassField : public Detail::RFieldBase {
-private:
+class RProxiedCollectionField : public Detail::RFieldBase {
+protected:
    /// Allows for iterating over the elements of a proxied collection. RCollectionIterableOnce avoids an additional
    /// iterator copy (see `TVirtualCollectionProxy::GetFunctionCopyIterator`) and thus can only be iterated once.
    class RCollectionIterableOnce {
@@ -805,30 +818,35 @@ private:
    std::size_t fItemSize;
    ClusterSize_t fNWritten;
 
-   RCollectionClassField(std::string_view fieldName, std::string_view className, TClass *classp);
+   /// Constructor used when the value type of the collection is not known in advance, i.e. in the case of custom
+   /// collections.
+   RProxiedCollectionField(std::string_view fieldName, std::string_view typeName, TClass *classp);
+   /// Constructor used when the value type of the collection is known in advance, e.g. in `RSetField`.
+   RProxiedCollectionField(std::string_view fieldName, std::string_view typeName,
+                           std::unique_ptr<Detail::RFieldBase> itemField);
 
 protected:
-   std::unique_ptr<Detail::RFieldBase> CloneImpl(std::string_view newName) const final;
+   std::unique_ptr<Detail::RFieldBase> CloneImpl(std::string_view newName) const override;
    const RColumnRepresentations &GetColumnRepresentations() const final;
    void GenerateColumnsImpl() final;
    void GenerateColumnsImpl(const RNTupleDescriptor &desc) final;
 
    void GenerateValue(void *where) const override;
-   void DestroyValue(void *objPtr, bool dtorOnly = false) const final;
+   void DestroyValue(void *objPtr, bool dtorOnly = false) const override;
 
    std::size_t AppendImpl(const void *from) final;
    void ReadGlobalImpl(NTupleSize_t globalIndex, void *to) final;
 
 public:
-   RCollectionClassField(std::string_view fieldName, std::string_view className);
-   RCollectionClassField(RCollectionClassField &&other) = default;
-   RCollectionClassField &operator=(RCollectionClassField &&other) = default;
-   ~RCollectionClassField() override = default;
+   RProxiedCollectionField(std::string_view fieldName, std::string_view typeName);
+   RProxiedCollectionField(RProxiedCollectionField &&other) = default;
+   RProxiedCollectionField &operator=(RProxiedCollectionField &&other) = default;
+   ~RProxiedCollectionField() override = default;
 
    using Detail::RFieldBase::GenerateValue;
    std::vector<RValue> SplitValue(const RValue &value) const final;
    size_t GetValueSize() const override { return fProxy->Sizeof(); }
-   size_t GetAlignment() const final { return alignof(std::max_align_t); }
+   size_t GetAlignment() const override { return alignof(std::max_align_t); }
    void CommitCluster() final;
    void AcceptVisitor(Detail::RFieldVisitor &visitor) const final;
    void GetCollectionInfo(NTupleSize_t globalIndex, RClusterIndex *collectionStart, ClusterSize_t *size) const
@@ -957,6 +975,7 @@ protected:
 
    std::size_t AppendImpl(const void *from) override;
    void ReadGlobalImpl(NTupleSize_t globalIndex, void *to) override;
+   std::size_t ReadBulkImpl(const RBulkSpec &bulkSpec) final;
 
 public:
    RRVecField(std::string_view fieldName, std::unique_ptr<Detail::RFieldBase> itemField);
@@ -1093,6 +1112,20 @@ public:
    void CommitCluster() final;
 };
 
+/// The generic field for a std::set<Type>
+class RSetField : public RProxiedCollectionField {
+protected:
+   std::unique_ptr<Detail::RFieldBase> CloneImpl(std::string_view newName) const final;
+
+public:
+   RSetField(std::string_view fieldName, std::string_view typeName, std::unique_ptr<Detail::RFieldBase> itemField);
+   RSetField(RSetField &&other) = default;
+   RSetField &operator=(RSetField &&other) = default;
+   ~RSetField() override = default;
+
+   size_t GetAlignment() const override { return std::alignment_of<std::set<std::max_align_t>>(); }
+};
+
 /// The field for values that may or may not be present in an entry. Parent class for unique pointer field and
 /// optional field. A nullable field cannot be instantiated itself but only its descendants.
 /// The RNullableField takes care of the on-disk representation. Child classes are responsible for the in-memory
@@ -1206,7 +1239,7 @@ struct HasCollectionProxyMemberType<
 /// The point here is that we can only tell at run time if a class has an associated collection proxy.
 /// For compile time, in the first iteration of this PR we had an extra template argument that acted as a "tag" to
 /// differentiate the RField specialization for classes with an associated collection proxy (inherits
-/// `RCollectionClassField`) from the RField primary template definition (`RClassField`-derived), as in:
+/// `RProxiedCollectionField`) from the RField primary template definition (`RClassField`-derived), as in:
 /// ```
 /// auto field = std::make_unique<RField<MyClass>>("klass");
 /// // vs
@@ -1259,13 +1292,13 @@ struct IsCollectionProxy : HasCollectionProxyMemberType<T> {
 /// };
 /// ```
 template <typename T>
-class RField<T, typename std::enable_if<IsCollectionProxy<T>::value>::type> : public RCollectionClassField {
+class RField<T, typename std::enable_if<IsCollectionProxy<T>::value>::type> : public RProxiedCollectionField {
 protected:
    void GenerateValue(void *where) const final { new (where) T(); }
 
 public:
    static std::string TypeName() { return ROOT::Internal::GetDemangledTypeName(typeid(T)); }
-   RField(std::string_view name) : RCollectionClassField(name, TypeName())
+   RField(std::string_view name) : RProxiedCollectionField(name, TypeName())
    {
       static_assert(std::is_class<T>::value, "collection proxy unsupported for fundamental types");
    }
@@ -1470,6 +1503,32 @@ public:
       ClusterSize_t size;
       fPrincipalColumn->GetCollectionInfo(clusterIndex, &collectionStart, &size);
       *static_cast<RNTupleCardinality<SizeT> *>(to) = size;
+   }
+
+   std::size_t ReadBulkImpl(const RBulkSpec &bulkSpec) final
+   {
+      RClusterIndex collectionStart;
+      ClusterSize_t collectionSize;
+      fPrincipalColumn->GetCollectionInfo(bulkSpec.fFirstIndex, &collectionStart, &collectionSize);
+
+      auto typedValues = static_cast<RNTupleCardinality<SizeT> *>(bulkSpec.fValues);
+      typedValues[0] = collectionSize;
+
+      auto lastOffset = collectionStart.GetIndex() + collectionSize;
+      ClusterSize_t::ValueType nRemainingEntries = bulkSpec.fCount - 1;
+      std::size_t nEntries = 1;
+      while (nRemainingEntries > 0) {
+         NTupleSize_t nItemsUntilPageEnd;
+         auto offsets = fPrincipalColumn->MapV<ClusterSize_t>(bulkSpec.fFirstIndex + nEntries, nItemsUntilPageEnd);
+         std::size_t nBatch = std::min(nRemainingEntries, nItemsUntilPageEnd);
+         for (std::size_t i = 0; i < nBatch; ++i) {
+            typedValues[nEntries + i] = offsets[i] - lastOffset;
+            lastOffset = offsets[i];
+         }
+         nRemainingEntries -= nBatch;
+         nEntries += nBatch;
+      }
+      return RBulkSpec::kAllSet;
    }
 };
 
@@ -2045,6 +2104,31 @@ public:
    RField(RField &&other) = default;
    RField &operator=(RField &&other) = default;
    ~RField() override = default;
+};
+
+template <typename ItemT>
+class RField<std::set<ItemT>> : public RSetField {
+   using ContainerT = typename std::set<ItemT>;
+
+protected:
+   void GenerateValue(void *where) const final { new (where) ContainerT(); }
+   void DestroyValue(void *objPtr, bool dtorOnly = false) const final
+   {
+      std::destroy_at(static_cast<ContainerT *>(objPtr));
+      Detail::RFieldBase::DestroyValue(objPtr, dtorOnly);
+   }
+
+public:
+   static std::string TypeName() { return "std::set<" + RField<ItemT>::TypeName() + ">"; }
+
+   explicit RField(std::string_view name) : RSetField(name, TypeName(), std::make_unique<RField<ItemT>>("_0")) {}
+   RField(RField &&other) = default;
+   RField &operator=(RField &&other) = default;
+   ~RField() override = default;
+
+   using Detail::RFieldBase::GenerateValue;
+   size_t GetValueSize() const final { return sizeof(ContainerT); }
+   size_t GetAlignment() const final { return std::alignment_of<ContainerT>(); }
 };
 
 template <typename... ItemTs>

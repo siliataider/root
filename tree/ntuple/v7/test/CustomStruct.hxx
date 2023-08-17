@@ -5,6 +5,7 @@
 #include <TRootIOCtor.h>
 
 #include <cstdint>
+#include <set>
 #include <string>
 #include <variant>
 #include <vector>
@@ -29,6 +30,10 @@ struct CustomStruct {
    std::vector<float> v1;
    std::vector<std::vector<float>> v2;
    std::string s;
+
+   bool operator<(const CustomStruct &c) const { return a < c.a && v1 < c.v1 && v2 < c.v2 && s < c.s; }
+
+   bool operator==(const CustomStruct &c) const { return a == c.a && v1 == c.v1 && v2 == c.v2 && s == c.s; }
 };
 
 struct DerivedA : public CustomStruct {

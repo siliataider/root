@@ -380,7 +380,7 @@ void ROOT::Experimental::RPrintValueVisitor::VisitEnumField(const REnumField &fi
    intValue.GetField()->AcceptVisitor(visitor);
 }
 
-void ROOT::Experimental::RPrintValueVisitor::VisitCollectionClassField(const RCollectionClassField &field)
+void ROOT::Experimental::RPrintValueVisitor::VisitProxiedCollectionField(const RProxiedCollectionField &field)
 {
    PrintCollection(field);
 }
@@ -389,7 +389,6 @@ void ROOT::Experimental::RPrintValueVisitor::VisitVectorField(const RVectorField
 {
    PrintCollection(field);
 }
-
 
 void ROOT::Experimental::RPrintValueVisitor::VisitVectorBoolField(const RField<std::vector<bool>> &field)
 {
