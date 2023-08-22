@@ -3,7 +3,7 @@ import ROOT
 import time
 import subprocess
 
-from DistRDF import live_visualize
+from DistRDF import LiveVisualize
 
 RDataFrame = ROOT.RDF.Experimental.Distributed.Dask.RDataFrame
 
@@ -15,6 +15,12 @@ def create_connection():
     cluster = LocalCluster(n_workers=20, threads_per_worker=1, processes=True, memory_limit="2GiB")
     client = Client(cluster)
     return client
+
+def set_fill_color(hist):
+    hist.SetFillColor(ROOT.kBlue)
+
+def fit_gaus(hist):
+    hist.Fit("gaus")
 
 if __name__ == "__main__":
 
@@ -49,52 +55,13 @@ if __name__ == "__main__":
                     50, -20, 20  
                     ), "x", "y", "z") 
 
-    live_visualize([normal_3d])
+    #LiveVisualize({normal_1d: set_fill_color}, fit_gaus)
+    LiveVisualize([normal_1d, normal_2d])
 
-    normal_3d.Draw("COLZ CONT")
+    normal_1d.Draw("COLZ CONT")
     c.Update()
 
     end_time = time.time()  
     elapsed_time = end_time - start_time
     
     print(f"Elapsed time: {elapsed_time} seconds")
-
-
-
-
-'''
-Elapsed time in seconds (10 workers, local cluster):
-
-        | Without live_visualize()  |  With live_visualize() 
---------------------------------------------------------------
-Histo1D |  9.106358051300049        |  8.95311713218689
---------------------------------------------------------------
-Histo2D |  9.291945695877075        |  8.989943504333496
---------------------------------------------------------------
-Histo3d |  12.687630414962769       |  33.36175608634949
---------------------------------------------------------------
-
-
-#Define("x", "gRandom->Gaus(1.*rdfentry_/10000., 2*{sigma_x}")
-df_ = df.Define("x", f"rdfentry_ < {num_entries/6} ? gRandom->Gaus(0, 2*{sigma_x}) : \
-                        rdfentry_ < {2*num_entries/6} ? gRandom->Gaus(2, 2*{sigma_x}) : \
-                        rdfentry_ < {3*num_entries/6} ? gRandom->Gaus(0, 2*{sigma_x}) : \
-                        rdfentry_ < {4*num_entries/6} ? gRandom->Gaus(-1, 2*{sigma_x}) : \
-                        rdfentry_ < {5*num_entries/6} ? gRandom->Gaus(2, 2*{sigma_x}) : \
-                        gRandom->Gaus(-1, {sigma_y})") \
-        .Define("y", f"rdfentry_ < {num_entries/6} ? gRandom->Gaus(1, 2*{sigma_y}) : \
-                        rdfentry_ < {2*num_entries/6} ? gRandom->Gaus(2, 2*{sigma_y}) : \
-                        rdfentry_ < {3*num_entries/6} ? gRandom->Gaus(1, 2*{sigma_y}) : \
-                        rdfentry_ < {4*num_entries/6} ? gRandom->Gaus(0, 2*{sigma_y}) : \
-                        rdfentry_ < {5*num_entries/6} ? gRandom->Gaus(2, 2*{sigma_y}) : \
-                        gRandom->Gaus(0, {sigma_y})") \
-        .Define("z", f"rdfentry_ < {num_entries/6} ? gRandom->Gaus({mean_z}, 0.3*{sigma_z}) : \
-                        rdfentry_ < {2*num_entries/6} ? gRandom->Gaus({mean_z}, 0.6*{sigma_z}) : \
-                        rdfentry_ < {3*num_entries/6} ? gRandom->Gaus({mean_z}, 0.2*{sigma_z}) : \
-                        rdfentry_ < {4*num_entries/6} ? gRandom->Gaus({mean_z}, -0.2*{sigma_z}) : \
-                        rdfentry_ < {5*num_entries/6} ? gRandom->Gaus({mean_z}, 0.3*{sigma_z}) : \
-                        gRandom->Gaus({mean_z}, {sigma_z})") \
-        .Define("x3d", f"gRandom->Gaus({mean_x}, 0.2*{sigma_x})") \
-        .Define("y3d", f"gRandom->Gaus({mean_y}, 0.2*{sigma_y})")
-
-'''

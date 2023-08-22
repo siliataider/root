@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import logging
-import sys
 import types
 
 import concurrent.futures
@@ -32,149 +31,6 @@ import inspect
 import warnings
 from functools import singledispatch
 
-def is_action_blocked(node):
-    """
-    Checks if the given Abstract Syntax Tree (AST) node corresponds to a blocked action.
-
-    Args:
-        node (ast.AST): The AST node to check.
-
-    Returns:
-        bool: True if the AST node corresponds to a blocked action,
-              False otherwise.
-    """
-
-    BLOCKED_ACTIONS = ["Delete", "Add", "AddBinContent", "Build", "Divide", "DoFillN", "Fill", "FillN", 
-                       "FillRandom", "Merge",  "Multiply", "Rebin", "Reset", "Scale", "SetBinContent", 
-                       "SetBinError", "SetBins", "SetBinsLength", "SetCellContent", "SetDirectory", 
-                       "SetEntries", "TransformHisto", "UpdateBinContent"]
-
-    # Checking if this node is a function
-    if isinstance(node, ast.Call):
-        # Checking if we're calling an attribute of an object
-        if isinstance(node.func, ast.Attribute):
-            func_name = node.func.attr
-            if func_name in BLOCKED_ACTIONS:
-                return True
-
-    return False
-
-
-def is_callback_safe(callback):
-    """
-    Checks if the provided callback function is safe for live visualization, 
-    meaning it does not contain blocked actions.
-
-    Args:
-        callback (function): The callback function to check.
-
-    Returns:
-        bool: True if the callback function is safe (does not contain blocked actions), False otherwise.
-    """
-
-    # Get the source code of the callback function
-    callback_source = inspect.getsource(callback)
-
-    # Parse the callback function's source code
-    callback_source_ast = ast.parse(callback_source)
-
-    for node in ast.walk(callback_source_ast):
-        if is_action_blocked(node):
-            return False
-    return True
-
-
-def is_valid_plot_object(obj):
-    """
-    Checks if the object is a valid plot object for live visualization.
-
-    Args:
-        obj: The object to be checked.
-
-    Returns:
-        bool: True if the object is a valid plot object for live visualization, False otherwise.
-    """
-    import ROOT
-
-    ALLOWED_OPERATIONS = ["Histo1C", "Histo1D", "Histo1F", "Histo1I", "Histo1K", "Histo1S",
-                          "Histo2C", "Histo2D", "Histo2F", "Histo2I", "Histo2S",
-                          "Histo3C", "Histo3D", "Histo3F", "Histo3I", "Histo3S",
-                          "Graph",
-                          "Profile1D", "Profile2D"]
-
-    try:
-        if obj.proxied_node.operation.name in ALLOWED_OPERATIONS:
-            return True
-        
-    except:
-        return False
-
-
-@singledispatch   
-def live_visualize(plot_object_callback_dict: Dict[type, Optional[Callable]], global_callback: Optional[Callable] = None):
-    """
-    Enables live visualization for the given plot objects by setting the
-    by setting the live_plot_object_callback_dict attribute of the Headnode.
-
-    Args:
-        live_plot_object_callback_dict (Dict[type, Optional[Callable]]): A dictionary where the keys are
-        the plot objects and the values are the corresponding callback functions. The callback
-        functions are optional (can be set to None) if no callback is required for a specific object.
-    """
-
-    # Import the necessary ROOT classes inside the function to avoid circular dependency
-    import ROOT
-    from DistRDF import HeadNode
-
-    value = list(plot_object_callback_dict)[0].proxied_node.value
-
-    if value:
-        warnings.warn("live_visualize() should be called before triggering the computation graph. Skipping live visualization.")
-
-    else:
-        plot_object_callback_id_dict = {}
-        for hist, callback in plot_object_callback_dict.items():
-            callbacks = []
-
-            if not is_valid_plot_object(hist):
-                raise ValueError("All elements in the list must be derived from ROOT's TH1 class. Skipping live visualization.")            
-            
-            if callback:
-                if callable(callback):
-                    if len(inspect.signature(callback).parameters) == 1:
-                        if is_callback_safe(callback):
-                            callbacks.append(callback)
-                        else:
-                            callback = None
-                            warnings.warn("The provided callback function contains blocked actions. Skipping callback: ")
-                    else:
-                        callback = None
-                        warnings.warn("The callback function should have exactly one parameter. Skipping callback.")
-                else:
-                    callback = None
-                    warnings.warn("The provided callback is not callable. Skipping callback.")
-            
-            if global_callback:
-                callbacks.append(global_callback)
-
-            plot_object_callback_id_dict[hist.proxied_node.node_id] = callbacks
-
-        headnode = list(plot_object_callback_dict)[0].proxied_node.get_head() # Assuming all hists share the same headnode
-        headnode.plot_object_callback_id_dict = plot_object_callback_id_dict
-    
-
-@live_visualize.register(list)
-def _1(plot_objects: List, callback: Optional[Callable] = None):
-
-    # Handle the case where the user passes a list without a dictionary
-    if callback is None:
-        plot_object_callback_dict = {hist: None for hist in plot_objects}
-    else:
-        plot_object_callback_dict = {hist: callback for hist in plot_objects}
-
-    # Call the main live_visualize function with the plot_object_callback_dict
-    live_visualize(plot_object_callback_dict)
-    
 
 def initialize(fun, *args, **kwargs):
     """
@@ -286,3 +142,182 @@ def create_distributed_module(parentmodule):
     distributed.VariationsFor = VariationsFor
 
     return distributed
+
+
+@singledispatch   
+def LiveVisualize(drawable_callback_dict: Dict[type, Optional[Callable]], global_callback: Optional[Callable] = None):
+    """
+    Enables real-time data representation for the given drawable objects by setting the
+    drawables_dict attribute of the Headnode.
+
+    Args:
+        drawable_callback_dict (Dict[type, Optional[Callable]]): A dictionary where 
+            keys are drawable objects and values are the corresponding callback functions. 
+            The callback functions are optional (can be set to None).
+
+        global_callback (Optional[Callable]): A global callback function that 
+            is applied to all drawable objects.
+
+    Raises:
+        ValueError: If a passed drawable object is not valid.
+    """
+    # Check if the objects already have a value (the computation graph has already been triggered)
+    if is_value_set(list(drawable_callback_dict)[0]):
+        warnings.warn("LiveVisualize() should be called before triggering the computation graph. \
+                      Skipping live visualization.")
+        return
+
+    drawable_id_callback_dict = {
+        # Key: node_id of the drawable object's proxied_node
+        # Value: List of validated callback functions for the drawable object
+        obj.proxied_node.node_id: process_callbacks(callback, global_callback)
+        for obj, callback in drawable_callback_dict.items()
+        # Filter: Only include valid drawable objects
+        if is_valid_drawable(obj)
+    }
+
+    # Assuming all objects share the same headnode
+    headnode = list(drawable_callback_dict)[0].proxied_node.get_head()  
+    headnode.drawables_dict = drawable_id_callback_dict
+
+
+@LiveVisualize.register(list)
+# Handle the case where the user passes a list instead of a dictionary
+def _1(drawables: List, callback: Optional[Callable] = None):
+    """
+    Wrapper function to facilitate calling LiveVisualize with a list of drawable objects.
+
+    Args:
+        drawables (List): A list of drawable objects to visualize.
+        callback (Optional[Callable]): An optional callback function to be applied to the drawable objects.
+
+    Notes:
+        This function constructs a dictionary of drawable objects and their associated callback functions,
+        and then calls the main LiveVisualize function with the constructed dictionary.
+    """
+    if callback is None:
+        drawable_callback_dict = {obj: None for obj in drawables}
+    else:
+        drawable_callback_dict = {obj: callback for obj in drawables}
+
+    LiveVisualize(drawable_callback_dict)
+
+
+def is_value_set(obj):
+    """
+    Checks if the value of an object is set.
+
+    Args:
+        obj: The object to be checked.
+
+    Returns:
+        bool: True if the value of the object is set, False otherwise.
+    """
+    if obj.proxied_node.value:
+        return True
+    else:
+        return False
+    
+
+def process_callbacks(callback, global_callback):
+    """
+    Process and validate callback functions for a drawable object.
+
+    Args:
+        obj: The drawable object to be processed.
+        callback: The callback function associated with the drawable object.
+        global_callback: The global callback function applied to all drawable objects.
+
+    Returns:
+        List[Callable]: A list of validated callback functions.
+    """
+    callbacks = []
+    if callback is None:
+        pass 
+    elif not callable(callback):
+        warnings.warn("The provided callback is not callable. Skipping callback.")
+    else:
+        if len(inspect.signature(callback).parameters) != 1:
+            warnings.warn("The callback function should have exactly one parameter. \
+                          Skipping callback.")
+        elif not is_callback_safe(callback):
+            warnings.warn("The provided callback function contains blocked actions. \
+                          Skipping callback.")
+        else:
+            callbacks.append(callback)
+
+    if global_callback:
+        callbacks.append(global_callback)
+
+    return callbacks
+
+
+def is_callback_safe(callback):
+    """
+    Checks if the provided callback function is safe for live visualization, 
+        (does not contain blocked actions).
+
+    Args:
+        callback (function): The callback function to check.
+
+    Returns:
+        bool: True if the callback function is safe, 
+            False otherwise.
+    """
+    # Get the source code of the callback function
+    callback_source = inspect.getsource(callback)
+    # Parse the callback function's source code
+    callback_source_ast = ast.parse(callback_source)
+    for node in ast.walk(callback_source_ast):
+        if is_action_blocked(node):
+            return False
+        
+    return True
+
+
+def is_action_blocked(node):
+    """
+    Checks if the given Abstract Syntax Tree (AST) node corresponds to a blocked action.
+
+    Args:
+        node (ast.AST): The AST node to check.
+
+    Returns:
+        bool: True if the AST node corresponds to a blocked action,
+              False otherwise.
+    """
+    BLOCKED_ACTIONS = ["Delete", "Add", "AddBinContent", "Build", "Divide", "DoFillN", "Fill", "FillN", 
+                       "FillRandom", "Merge",  "Multiply", "Rebin", "Reset", "Scale", "SetBinContent", 
+                       "SetBinError", "SetBins", "SetBinsLength", "SetCellContent", "SetDirectory", 
+                       "SetEntries", "TransformHisto", "UpdateBinContent"]
+    # Check if this node is a function
+    if isinstance(node, ast.Call):
+        # Check if we're calling an attribute of an object
+        if isinstance(node.func, ast.Attribute):
+            func_name = node.func.attr
+            if func_name in BLOCKED_ACTIONS:
+                return True
+            
+    return False
+
+
+def is_valid_drawable(obj):
+    """
+    Checks if the object is a valid drawable object for live visualization.
+
+    Args:
+        obj: The object to be checked.
+
+    Returns:
+        bool: True if the object is a valid drawable object for live visualization 
+            according to the ALLOWED_OPERATIONS list , False otherwise.
+    """
+    ALLOWED_OPERATIONS = ["Histo1D", "Histo2D", "Histo3D",
+                          "Graph", "GraphAsymmErrors",
+                          "Profile1D", "Profile2D"]
+    try:    
+        if obj.proxied_node.operation.name in ALLOWED_OPERATIONS:
+            return True    
+    except:
+        raise ValueError("All elements in the list must be derived from ROOT's TH1 class. \
+                         Skipping live visualization.")

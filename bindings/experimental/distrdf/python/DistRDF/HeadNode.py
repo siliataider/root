@@ -104,8 +104,9 @@ class HeadNode(Node, ABC):
         # column names.
         self._localdf = localdf
 
-        # A dictionary where the keys are the objects to live visualize and the values are the corresponding callback functions 
-        self.plot_object_callback_id_dict: Dict[int, Optional[Callable]] = {}
+        # A dictionary where the keys are the IDs of the objects to live visualize
+        # and the values are the corresponding callback functions 
+        self.drawables_dict: Dict[int, Optional[Callable]] = {}
 
     @property
     def npartitions(self) -> Optional[int]:
@@ -208,16 +209,27 @@ class HeadNode(Node, ABC):
         # List of action nodes in the same order as values
         local_nodes = self._get_action_nodes()
 
-        # Check if live visualization is enabled
-        if self.plot_object_callback_id_dict:
-            for i in range(len(local_nodes)):
-                if local_nodes[i].node_id in self.plot_object_callback_id_dict:
-                    # Get the current object's callbacks list
-                    current_value = self.plot_object_callback_id_dict[local_nodes[i].node_id]
-                    # Update the value to include the index 'i' as the second element of the tuple
-                    # and local_nodes[i].operation.name as the third element
-                    self.plot_object_callback_id_dict[local_nodes[i].node_id] = (current_value, i, local_nodes[i].operation.name)
-            returned_values = self.backend.ProcessAndMergeLive(self._build_ranges(), mapper, distrdf_reducer, self.plot_object_callback_id_dict)
+        # Prepare a dictionary with additional information for live visualization
+        drawables_dict_update = {
+            # Key: node_id
+            node.node_id: (
+                # Tuple containing:
+                # 1. Callback functions passed by the user
+                self.drawables_dict[node.node_id],
+                # 2. Index of the node in the local_nodes list
+                i,
+                # 3. Name of the operation associated with the node
+                node.operation.name
+            )
+            for i, node in enumerate(local_nodes)
+            # Filter: Only include nodes that have their node_id in list of objects provided by the user
+            if node.node_id in self.drawables_dict
+        }
+
+        # Use the appropriate backend method based on whether or not live visualization is enabled
+        if drawables_dict_update:
+            self.drawables_dict.update(drawables_dict_update)
+            returned_values = self.backend.ProcessAndMergeLive(self._build_ranges(), mapper, distrdf_reducer, self.drawables_dict)
         else:
             returned_values = self.backend.ProcessAndMerge(self._build_ranges(), mapper, distrdf_reducer)
 

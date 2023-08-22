@@ -1,6 +1,6 @@
 from dask.distributed import LocalCluster, Client
 import ROOT
- 
+
 from DistRDF import LiveVisualize
 
 RDataFrame = ROOT.RDF.Experimental.Distributed.Dask.RDataFrame
@@ -14,16 +14,17 @@ def set_marker(graph):
     graph.SetMarkerStyle(5)
 
 if __name__ == "__main__":
-
     connection = create_connection()
-    num_entries = 200
+    num_entries = 20
     d = RDataFrame(num_entries, daskclient=connection)
     
     dd = d.Define("x", "rdfentry_").Define("y", "x*x")
     
-    graph = dd.Graph("x", "y")
+    dde = dd.Define("exl", ".5").Define("exh", ".5").Define("eyl", "10").Define("eyh", "10")
+    
+    graph = dde.GraphAsymmErrors("x", "y", "exl", "exh", "eyl", "eyh")
 
-    LiveVisualize({graph: set_marker})
+    LiveVisualize({graph: None})
     
     c = ROOT.TCanvas()
     graph.Sort()

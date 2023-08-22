@@ -11,7 +11,7 @@
 ################################################################################
 from __future__ import annotations
 
-import os, sys, logging
+import os
 from typing import Any, Dict, Optional, TYPE_CHECKING
 import time
 import random
@@ -36,8 +36,6 @@ except ImportError:
 if TYPE_CHECKING:
     from dask_jobqueue import JobQueueCluster
 
-
-logging.basicConfig(level=logging.DEBUG, stream=sys.stderr, format="%(levelname)s: %(message)s")
 
 def get_total_cores_generic(client: Client) -> int:
     """
@@ -171,18 +169,7 @@ class DaskBackend(Base.BaseBackend):
         Returns:
             list: A list representing the values of action nodes returned
             after computation (Map-Reduce).
-        """
-
-        # These need to be passed as variables, because passing `self` inside
-        # following `dask_mapper` function would trigger serialization errors
-        # like the following:
-        #
-        # AttributeError: Can't pickle local object 'DaskBackend.ProcessAndMerge.<locals>.dask_mapper'
-        # TypeError: cannot pickle '_asyncio.Task' object
-        #
-        # Which boil down to the self.client object not being serializable
-        #         
-
+        """   
         dmapper = dask.delayed(DaskBackend.dask_mapper)
         dreducer = dask.delayed(reducer)
 
@@ -203,79 +190,124 @@ class DaskBackend(Base.BaseBackend):
         # https://docs.dask.org/en/latest/diagnostics-distributed.html#dask.distributed.progress
         final_results = mergeables_lists.pop().persist()
         progress(final_results)
-        ret = final_results.compute()
 
-        return ret
+        return final_results.compute()
     
-    def ProcessAndMergeLive(self, ranges, mapper, reducer, plot_object_callback_id_dict):  
-        logging.info("Live visualization enabled.")
-        dmapper = dask.delayed(DaskBackend.dask_mapper)
+    def ProcessAndMergeLive(self, ranges, mapper, reducer, drawable_id_callback_dict):  
+        """
+        Performs real-time map-reduce using Dask framework allowing real-time data representation.
 
+        Args:
+            ranges (list): A list of ranges to be processed.
+
+            mapper (function): A function that runs the computational graph
+                and returns a list of values.
+
+            reducer (function): A function that merges two lists that were
+                returned by the mapper.
+
+            drawable_id_callback_dict (dict): A dictionary where keys are plot object IDs 
+                and values are tuples containing callback functions, index of the plot object, 
+                and operation name.
+
+        Returns:
+            merged_result: The merged result of the computation.
+        """
+        # Set up Dask mapper
+        dmapper = dask.delayed(DaskBackend.dask_mapper)
         mergeables_lists = [dmapper(range, self.headers, self.shared_libraries, mapper) for range in ranges]
 
         # Compute the delayed tasks to get Dask futures that can be passed to the as_completed method
         future_tasks = self.client.compute(mergeables_lists)
 
-        # Save the current canvas
-        backend_pad = ROOT.TVirtualPad.TContext()
+        # Set up live visualization canvas
+        c = self._setup_canvas(len(drawable_id_callback_dict))
 
-        num_plots = len(plot_object_callback_id_dict)
+        # Process partial results and display plots
+        merged_result = self._process_partial_results(c, drawable_id_callback_dict, reducer, future_tasks)
+
+        # Close the live visualization canvas canvas
+        c.Close()    
+
+        return merged_result
+    
+                
+    def _setup_canvas(self, num_plots):
+        """
+        Set up a TCanvas for live visualization with divided pads based on the number of plots.
+
+        Args:
+            num_plots (int): Number of plots to be displayed.
+
+        Returns:
+            c: The initialized TCanvas object.
+        """
+        # Define constants for canvas layout
+        CANVAS_WIDTH = 800
+        CANVAS_HEIGHT = 400
+
         canvas_rows = math.ceil(math.sqrt(num_plots))
         canvas_cols = math.ceil(num_plots / canvas_rows)
-        canvas_width = 1000 * canvas_cols
-        canvas_height = 500 * canvas_rows
-        c = ROOT.TCanvas("distrdf_backend", "distrdf_backend", canvas_width, canvas_height)
-        canvas_divided = False
+        c = ROOT.TCanvas("distrdf_backend", "distrdf_backend", CANVAS_WIDTH * canvas_rows, CANVAS_HEIGHT * canvas_cols)
+        c.Divide(canvas_rows, canvas_cols)
+        return c
 
-        # Create a dictionary to store cumulative plots on each pad of the canvas
+
+    def _process_partial_results(self, canvas, callback_dict, reducer, future_tasks):
+        """
+        Process partial results and display plots on the provided canvas.
+
+        Args:
+            canvas: The TCanvas object for displaying plots.
+            callback_dict (dict): A dictionary with drawable object IDs and corresponding callback functions.
+            reducer (function): A function for reducing partial results.
+            future_tasks: Dask future tasks representing partial results.
+
+        Returns:
+            merged_result: The merged result of the computation.
+        """
+        merged_result = None
         cumulative_plot = {}
-        culumative_result = None
 
-        # Process the partial results in the order of which they become available in batches
         for batch in as_completed(future_tasks, with_results=True).batches():
             for future, result in batch:
-                if culumative_result is None:
-                    culumative_result = result
-                else:
-                    # Continuously reducing the results
-                    culumative_result = reducer(culumative_result, result)
-            
-            # Retrieve the partial results
-            mergeables = culumative_result.mergeables
-
-            # Divide the canvas according to the number of plots to be generated
-            if not canvas_divided:
-                c.Divide(canvas_rows, canvas_cols)
-                canvas_divided = True
+                merged_result = reducer(merged_result, result) if merged_result else result
+            mergeables = merged_result.mergeables
 
             pad_num = 1
-            for plot_object_id in plot_object_callback_id_dict.keys():
-                callbacks_list, index, operation_name = plot_object_callback_id_dict[plot_object_id]
-                plot_value = mergeables[index].GetValue()
-                cumulative_plot[index] = plot_value
+            for drawable_id, (callbacks_list, index, operation_name) in callback_dict.items():
+                drawable_value = mergeables[index].GetValue()
+                cumulative_plot[index] = drawable_value
 
-                pad = c.cd(pad_num)
-
-                # Apply the callback functions to the plot object 
-                if callbacks_list:
-                    for callback in callbacks_list:
-                        callback(cumulative_plot[index])
-
-                # Check the operation type 
-                if operation_name == "Graph":
-                    logging.debug("Got a Graph.")
-                    cumulative_plot[index].Sort()
-                    cumulative_plot[index].Draw("AP")
-                else:
-                    cumulative_plot[index].Draw()
-
-                pad.Update()
+                pad = canvas.cd(pad_num)
+                self._apply_callbacks_and_draw(pad, cumulative_plot, callbacks_list, operation_name, index)
                 pad_num += 1
-      
-        # Close the live visualization canvas canvas
-        c.Close()      
-        return culumative_result
-                
+        
+        return merged_result
+
+
+    def _apply_callbacks_and_draw(self, pad, cumulative_plot, callbacks_list, operation_name, index):
+        """
+        Apply callbacks and draw plots on the provided pad.
+
+        Args:
+            pad: The TPad object for drawing plots.
+            cumulative_plot: A dictionary of the current merged partial results.
+            callbacks_list: A list of callback functions to be applied.
+            operation_name (str): Name of the operation associated with the plot.
+            index (int): Index of the plot in cumulative_plot dictionary.
+        """
+        if callbacks_list:
+            for callback in callbacks_list:
+                callback(cumulative_plot[index])
+
+        if operation_name in ["Graph", "GraphAsymmErrors"]:
+            cumulative_plot[index].Draw("AP")
+        else:
+            cumulative_plot[index].Draw()
+
+        pad.Update()
+
 
     def distribute_unique_paths(self, paths):
         """

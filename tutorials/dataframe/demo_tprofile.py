@@ -1,7 +1,7 @@
 from dask.distributed import LocalCluster, Client
 import ROOT
 
-from DistRDF import live_visualize
+from DistRDF import LiveVisualize
 
 RDataFrame = ROOT.RDF.Experimental.Distributed.Dask.RDataFrame
 
@@ -25,32 +25,10 @@ if __name__ == "__main__":
     hprof1d = df.Profile1D(("hprof1d", "Profile of pz versus px", 100, -25, 35), "x", "y")
     hprof2d = df.Profile2D(("hprof2d", "Profile of pz versus px and py", 100, -20, 20, 100, -20, 20, -20, 20), "x", "y", "z")
 
-    '''c1 = ROOT.TCanvas("c1", "Profile histogram example", 200, 10, 1000, 500)
-    live_visualize([hprof1d])
-    hprof1d.Draw()'''
+    c1 = ROOT.TCanvas("c1", "Profile histogram example", 200, 10, 1000, 500)
+    LiveVisualize([hprof1d])
+    hprof1d.Draw()
 
-    c2 = ROOT.TCanvas("c2", "Profile2D histogram example", 200, 10, 1000, 500)
-    live_visualize([hprof2d])
-    hprof2d.Draw("colz")
-    
-
-
-    
-'''
-           .Define("px", "gRandom->Gaus()") \
-           .Define("py", f"gRandom->Gaus(rdfentry_/{num_entries}, 10)") \
-           .Define("pz", "sqrt(px * px + py * py) + gRandom->Rndm()*5 + gRandom->Rndm()*5") \
-           .Define("x", f"rdfentry_ < {num_entries/6} ? gRandom->Gaus(0, 2*{sigma_x}) : \
-                           rdfentry_ < {2*num_entries/6} ? gRandom->Gaus(2, 2*{sigma_x}) : \
-                           rdfentry_ < {3*num_entries/6} ? gRandom->Gaus(0, 2*{sigma_x}) : \
-                           rdfentry_ < {4*num_entries/6} ? gRandom->Gaus(-1, 2*{sigma_x}) : \
-                           rdfentry_ < {5*num_entries/6} ? gRandom->Gaus(4, 2*{sigma_x}) : \
-                           gRandom->Gaus(-1, {sigma_y})") \
-           .Define("y", f"rdfentry_ < {num_entries/6} ? gRandom->Gaus(1, 2*{sigma_y}) : \
-                           rdfentry_ < {2*num_entries/6} ? gRandom->Gaus(2, 2*{sigma_y}) : \
-                           rdfentry_ < {3*num_entries/6} ? gRandom->Gaus(1, 2*{sigma_y}) : \
-                           rdfentry_ < {4*num_entries/6} ? gRandom->Gaus(0, 2*{sigma_y}) : \
-                           rdfentry_ < {5*num_entries/6} ? gRandom->Gaus(0.5, 2*{sigma_y}) : \
-                           gRandom->Gaus(0, {sigma_y})") 
-                           
-'''
+    '''c2 = ROOT.TCanvas("c2", "Profile2D histogram example", 200, 10, 1000, 500)
+    LiveVisualize([hprof2d])
+    hprof2d.Draw("colz")'''
