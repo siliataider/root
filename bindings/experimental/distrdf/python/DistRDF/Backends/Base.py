@@ -17,8 +17,6 @@ from functools import partial
 from typing import Callable, Iterable, List, Optional, TYPE_CHECKING, Union
 
 import ROOT
-import time
-import random
 
 from DistRDF import Ranges
 from DistRDF.Backends import Utils
@@ -55,6 +53,7 @@ def get_mergeable_values(starting_node: ROOT.RDF.RNode, range_id: int,
     """
     Triggers the computation graph and returns a list of mergeable values.
     """
+
     actions = computation_graph_callable(starting_node, range_id, exec_id)
 
     mergeables = [Utils.get_mergeablevalue(action) for action in actions]
@@ -104,8 +103,7 @@ def distrdf_mapper(
     except ROOT.std.exception as e:
         raise RuntimeError(f"C++ exception thrown:\n\t{type(e).__name__}: {e.what()}")
 
-    ret = TaskResult(mergeables, rdf_plus.entries_in_trees)
-    return ret
+    return TaskResult(mergeables, rdf_plus.entries_in_trees)
 
 
 def merge_values(mergeables_out: Iterable, mergeables_in: Iterable) -> Iterable:

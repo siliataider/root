@@ -13,12 +13,7 @@ from __future__ import annotations
 
 import os
 from typing import Any, Dict, Optional, TYPE_CHECKING
-import time
-import random
-import copy
 import math
-from typing import List
-
 import ROOT
 
 from DistRDF import DataFrame
@@ -108,8 +103,7 @@ class DaskBackend(Base.BaseBackend):
         # N is the number of cores on the local machine.
         self.client = (daskclient if daskclient is not None else
                        Client(LocalCluster(n_workers=os.cpu_count(), threads_per_worker=1, processes=True)))
-        
-        
+
     def optimize_npartitions(self) -> int:
         """
         Attempts to compute a clever number of partitions for the current
@@ -155,7 +149,6 @@ class DaskBackend(Base.BaseBackend):
         return ret
 
     def ProcessAndMerge(self, ranges, mapper, reducer):
-        print("Live visualization disabled")
         """
         Performs map-reduce using Dask framework.
 
@@ -259,8 +252,12 @@ class DaskBackend(Base.BaseBackend):
 
         Args:
             canvas: The TCanvas object for displaying plots.
-            callback_dict (dict): A dictionary with drawable object IDs and corresponding callback functions.
+			
+            callback_dict (dict): A dictionary with drawable object IDs 
+				and corresponding callback functions.
+			
             reducer (function): A function for reducing partial results.
+			
             future_tasks: Dask future tasks representing partial results.
 
         Returns:
@@ -292,9 +289,13 @@ class DaskBackend(Base.BaseBackend):
 
         Args:
             pad: The TPad object for drawing plots.
+			
             cumulative_plot: A dictionary of the current merged partial results.
+			
             callbacks_list: A list of callback functions to be applied.
+			
             operation_name (str): Name of the operation associated with the plot.
+		
             index (int): Index of the plot in cumulative_plot dictionary.
         """
         if callbacks_list:

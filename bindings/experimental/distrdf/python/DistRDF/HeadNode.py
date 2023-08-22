@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 @singledispatch
 def _append_node_to_actions(operation: Operation, node: Node, actions: List[Node]) -> None:
     """
@@ -31,6 +32,7 @@ def _append_node_to_actions(operation: Operation, node: Node, actions: List[Node
     node is an action.
     """
     pass
+
 
 @_append_node_to_actions.register(Action)
 @_append_node_to_actions.register(InstantAction)
@@ -198,6 +200,7 @@ class HeadNode(Node, ABC):
 
         self.exec_id = _graph_cache.ExecutionIdentifier(self.rdf_uuid, uuid.uuid4())
 
+
         computation_graph_callable = partial(ComputationGraphGenerator.trigger_computation_graph, self._generate_graph_dict())
 
         mapper = partial(distrdf_mapper,
@@ -205,7 +208,6 @@ class HeadNode(Node, ABC):
                          computation_graph_callable=computation_graph_callable,
                          initialization_fn=self.backend.initialization)
 
-        # Execute graph distributedly and return the aggregated results from all tasks
         # List of action nodes in the same order as values
         local_nodes = self._get_action_nodes()
 
@@ -222,11 +224,12 @@ class HeadNode(Node, ABC):
                 node.operation.name
             )
             for i, node in enumerate(local_nodes)
-            # Filter: Only include nodes that have their node_id in list of objects provided by the user
+            # Filter: Only include nodes requested by the user
             if node.node_id in self.drawables_dict
         }
 
-        # Use the appropriate backend method based on whether or not live visualization is enabled
+		# Execute graph distributedly and return the aggregated results from all tasks
+		# using the appropriate backend method based on whether or not live visualization is enabled
         if drawables_dict_update:
             self.drawables_dict.update(drawables_dict_update)
             returned_values = self.backend.ProcessAndMergeLive(self._build_ranges(), mapper, distrdf_reducer, self.drawables_dict)

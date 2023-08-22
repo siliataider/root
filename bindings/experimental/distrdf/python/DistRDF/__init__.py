@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-from typing import List, Dict, Optional, Callable, Any
+from typing import List, Dict, Optional, Callable
 import ast
 import inspect
 import warnings
@@ -155,7 +155,7 @@ def LiveVisualize(drawable_callback_dict: Dict[type, Optional[Callable]], global
             keys are drawable objects and values are the corresponding callback functions. 
             The callback functions are optional (can be set to None).
 
-        global_callback (Optional[Callable]): A global callback function that 
+        global_callback (Optional[Callable]): An optional global callback function that 
             is applied to all drawable objects.
 
     Raises:
@@ -182,13 +182,13 @@ def LiveVisualize(drawable_callback_dict: Dict[type, Optional[Callable]], global
 
 
 @LiveVisualize.register(list)
-# Handle the case where the user passes a list instead of a dictionary
 def _1(drawables: List, callback: Optional[Callable] = None):
     """
     Wrapper function to facilitate calling LiveVisualize with a list of drawable objects.
 
     Args:
         drawables (List): A list of drawable objects to visualize.
+		
         callback (Optional[Callable]): An optional callback function to be applied to the drawable objects.
 
     Notes:
@@ -225,7 +225,9 @@ def process_callbacks(callback, global_callback):
 
     Args:
         obj: The drawable object to be processed.
+		
         callback: The callback function associated with the drawable object.
+		
         global_callback: The global callback function applied to all drawable objects.
 
     Returns:
