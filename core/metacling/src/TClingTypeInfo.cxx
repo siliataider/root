@@ -36,6 +36,7 @@ but the type metadata comes from the Clang C++ compiler, not CINT.
 #include "clang/AST/Type.h"
 #include "clang/AST/PrettyPrinter.h"
 #include "clang/Frontend/CompilerInstance.h"
+#include "clang/interpreter/CppInterOp.h"
 
 #include <cstdio>
 #include <string>
@@ -116,12 +117,12 @@ const char *TClingTypeInfo::Name() const
 ////////////////////////////////////////////////////////////////////////////////
 
 long TClingTypeInfo::Property() const
-{
+{  
    if (!IsValid()) {
       return 0L;
    }
    long property = 0L;
-   if (llvm::isa<clang::TypedefType>(*fQualType)) {
+   if (Cpp::IsTypedefed(fDecl)) {
       property |= kIsTypedef;
    }
    clang::QualType QT = fQualType.getCanonicalType();
@@ -129,52 +130,47 @@ long TClingTypeInfo::Property() const
    const clang::TagType *tagQT = llvm::dyn_cast<clang::TagType>(QT.getTypePtr());
    if (tagQT) {
       // Note: Now we have class, enum, struct, union only.
-      const clang::TagDecl *TD = llvm::dyn_cast<clang::TagDecl>(tagQT->getDecl());
-      if (!TD)
-         return property;
-      switch (TD->getAccess()) {
-         case clang::AS_public:
-            property |= kIsPublic;
-            break;
-         case clang::AS_protected:
-            property |= kIsProtected | kIsNotReacheable;
-            break;
-         case clang::AS_private:
-            property |= kIsPrivate | kIsNotReacheable;
-            break;
-         case clang::AS_none:
-            if (TD->getDeclContext()->isNamespace())
-               property |= kIsPublic;
-            break;
-         default:
-            // IMPOSSIBLE
-            assert(false && "Unexpected value for the access property value in Clang");
-            break;
+      if (Cpp::IsPublicVariable(fDecl) or Cpp::IsNamespace(fDecl)) {
+         property |= kIsPublic;
+      }
+      else if (Cpp::IsProtectedVariable(fDecl)) {
+         property |= kIsProtected | kIsNotReacheable;
+      }
+      else if (Cpp::IsPrivateVariable(fDecl)) {
+         property |= kIsPrivate | kIsNotReacheable;
+      }
+      else {
+         // IMPOSSIBLE
+         assert(false && "Unexpected value for the access property value in Clang");
       }
       if (!(property & kIsNotReacheable)) {
          if (! ROOT::TMetaUtils::IsDeclReacheable(*TD))
             property |= kIsNotReacheable;
       }
-      if (TD->isEnum()) {
+      if (Cpp::IsEnumType(fDecl)) {
          property |= kIsEnum;
       } else {
          // Note: Now we have class, struct, union only.
+         if (Cpp::isClass()) {
+            const clang::CXXRecordDecl *CRD =
+            llvm::dyn_cast<clang::CXXRecordDecl>(TD);
+            if (CRD->isClass()) {
+               property |= kIsClass;
+            }
+            else if (CRD->isStruct()) {
+               property |= kIsStruct;
+            }
+            else if (CRD->isUnion()) {
+               property |= kIsUnion;
+            }
+         } else {
+            return property;
+         } 
+         // isAbstract can trigger deserialization
          const clang::CXXRecordDecl *CRD =
             llvm::dyn_cast<clang::CXXRecordDecl>(TD);
-         if (!CRD)
-            return property;
-         if (CRD->isClass()) {
-            property |= kIsClass;
-         }
-         else if (CRD->isStruct()) {
-            property |= kIsStruct;
-         }
-         else if (CRD->isUnion()) {
-            property |= kIsUnion;
-         }
-         // isAbstract can trigger deserialization
          cling::Interpreter::PushTransactionRAII RAII(fInterp);
-         if (CRD->isThisDeclarationADefinition() && CRD->isAbstract()) {
+         if (CRD->isThisDeclarationADefinition() && Cpp::IsAbstract(fDecl)) {
             property |= kIsAbstract;
          }
       }
