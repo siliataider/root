@@ -80,6 +80,7 @@ class ROOTFacade(types.ModuleType):
             "SetHeuristicMemoryPolicy",
             "SetImplicitSmartPointerConversion",
             "SetOwnership",
+            "CreateCallbackWrapper", # TODO
         ]
         for name in self._cppyy_exports:
             setattr(self, name, getattr(cppyy._backend, name))

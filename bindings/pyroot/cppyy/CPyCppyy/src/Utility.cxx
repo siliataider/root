@@ -1285,3 +1285,24 @@ bool CPyCppyy::Utility::IncludePython()
 
     return includesDone;
 }
+
+
+//----------------------------------------------------------------------------
+// TODO
+#include "DeclareConverters.h"
+std::string CPyCppyy::Utility::CreateCallbackWrapper(PyObject* callback, const std::string& ret_type, const std::string& signature)
+{
+    // CPyCppyy::FunctionPointerConverter conv(ret_type, signature);
+
+    std::string full_signature = ret_type + " (*)" + signature;
+    std::cout << "!! CreateCallbackWrapper for: " << full_signature << std::endl;
+    CPyCppyy::Converter* conv = CreateConverter(full_signature, 0);
+
+    void* func_ptr = nullptr;
+    bool ok = conv->ToMemory(callback, &func_ptr, nullptr);
+    if (!ok) {
+        return "!! Converter could not build wrapper !!";
+    }
+
+    return "__cppyy_internal::fptr_wrap1";
+}

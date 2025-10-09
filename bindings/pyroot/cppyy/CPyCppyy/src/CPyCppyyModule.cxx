@@ -966,6 +966,19 @@ static PyObject* EndCaptureStderr(PyObject*, PyObject*)
 }
 } // unnamed namespace
 
+//----------------------------------------------------------------------------
+// TODO
+static PyObject* CreateCallbackWrapper(PyObject*, PyObject* args)
+{
+    PyObject* callback = nullptr;
+    const char* ret_type = nullptr;
+    const char* signature = nullptr;
+    if (!PyArg_ParseTuple(args, "Oss", &callback, &ret_type, &signature))
+        return nullptr;
+
+    std::string result = CPyCppyy::Utility::CreateCallbackWrapper(callback, ret_type, signature);
+    return PyUnicode_FromString(result.c_str());
+}
 
 //- data -----------------------------------------------------------------------
 static PyMethodDef gCPyCppyyMethods[] = {
@@ -1014,6 +1027,8 @@ static PyMethodDef gCPyCppyyMethods[] = {
       METH_NOARGS, (char*) "Begin capturing stderr to a in memory buffer."},
     {(char*) "_end_capture_stderr", (PyCFunction)EndCaptureStderr,
       METH_NOARGS, (char*) "End capturing stderr and returns the captured buffer."},
+    {(char*) "CreateCallbackWrapper", (PyCFunction)CreateCallbackWrapper,
+      METH_VARARGS | METH_KEYWORDS, (char*)"cppyy internal function"},
     {nullptr, nullptr, 0, nullptr}
 };
 

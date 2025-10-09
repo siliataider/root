@@ -476,7 +476,21 @@ def _PyFilter(rdf, callable_or_str, *args, extra_args={}):
     return rdf._OriginalFilter("Numba::" + func_call, filter_name)
 
 
-def _PyDefine(rdf, col_name, callable_or_str, cols=[], extra_args={}):
+def _create_cpp_wrapper(callback):
+    import sys
+
+    import cppyy
+
+    ret_type = "bool"
+    signature = "(int)"
+    
+    ret = cppyy._backend.CreateCallbackWrapper(callback, ret_type, signature)
+    print("!! _create_cpp_wrapper returned:", ret)
+
+    return ret
+
+
+def _PyDefine(rdf, col_name, callable_or_str, cols=[], extra_args={}, numba_jit=False):
     """
     Defines a new column in the RDataFrame.
     Arguments:
@@ -526,6 +540,14 @@ def _PyDefine(rdf, col_name, callable_or_str, cols=[], extra_args={}):
     if rdf_node is not None:
         return rdf_node
 
-    jitter = FunctionJitter(rdf)
-    func_call = jitter.jit_function(func, cols, extra_args)
-    return rdf._OriginalDefine(col_name, "Numba::" + func_call)
+    if numba_jit:
+        jitter = FunctionJitter(rdf)
+        func_call = jitter.jit_function(func, cols, extra_args)
+        return rdf._OriginalDefine(col_name, "Numba::" + func_call)
+    
+    else:
+        wrapper_name = _create_cpp_wrapper(func)
+        print("!! cols:", cols)
+        func_call = f"{wrapper_name}({','.join(cols)})"
+        print("!! PyDefine making func_call:", func_call)
+        return rdf._OriginalDefine(col_name, func_call)

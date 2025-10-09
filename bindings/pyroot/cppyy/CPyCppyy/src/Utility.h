@@ -121,4 +121,9 @@ bool IncludePython();
 
 } // namespace CPyCppyy
 
+namespace CPyCppyy::Utility {
+    std::string CreateCallbackWrapper(PyObject*, const std::string&, const std::string&);
+}
+
+
 #endif // !CPYCPPYY_UTILITY_H
