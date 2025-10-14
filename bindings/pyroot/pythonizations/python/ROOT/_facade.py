@@ -385,6 +385,9 @@ class ROOTFacade(types.ModuleType):
             ns.RunGraphs = _rungraphs(ns.Distributed.RunGraphs, ns.RunGraphs)
             ns.Experimental.VariationsFor = _variationsfor(ns.Distributed.VariationsFor, ns.Experimental.VariationsFor)
             ns.Experimental.FromSpec = _fromspec(ns.Distributed.FromSpec, ns.Experimental.FromSpec)
+
+            from ._pythonization._rdf_pyz import _cpp_signature
+            ns.cpp_signature = staticmethod(_cpp_signature)
         except ImportError:
             pass
 

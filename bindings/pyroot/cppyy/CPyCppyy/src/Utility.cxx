@@ -1304,5 +1304,8 @@ std::string CPyCppyy::Utility::CreateCallbackWrapper(PyObject* callback, const s
         return "!! Converter could not build wrapper !!";
     }
 
+    // TODO: need to find a way to get the name of the wrapper
+    // std::string wrapper_name = GetFunctionNameFromAddress(func_ptr);
+
     return "__cppyy_internal::fptr_wrap1";
 }

@@ -476,19 +476,51 @@ def _PyFilter(rdf, callable_or_str, *args, extra_args={}):
     return rdf._OriginalFilter("Numba::" + func_call, filter_name)
 
 
-def _create_cpp_wrapper(callback):
-    import sys
+def _cpp_signature(ret=None, args=None):
+    def _decorate(func):
+        func.__cpp_ret__ = ret
+        func.__cpp_args__ = list(args) if args is not None else None
+        return func
+    return _decorate
 
+def _create_cpp_wrapper(callback, rdf, cols):
     import cppyy
 
-    ret_type = "bool"
-    signature = "(int)"
+    def get_cpp_name(py_type):
+        builtin_map = {
+            float: "double",
+            int: "int",
+            bool: "bool",
+            str: "std::string",
+            type(None): "void",
+        }
+
+        if py_type in builtin_map:
+            return builtin_map[py_type]
+        
+        return py_type.__cpp_name__ if hasattr(py_type, "__cpp_name__") else str(py_type)
     
-    ret = cppyy._backend.CreateCallbackWrapper(callback, ret_type, signature)
-    print("!! _create_cpp_wrapper returned:", ret)
+    hints = getattr(callback, "__annotations__", {})
+    # try with type hints (doesn't work because of a parsing issue with in clingwrapper)
+    if hints:
+        try:
+            ret_type = get_cpp_name(hints.get("return"))
+            # params = [get_cpp_name(hints[p]) for p in hints if p != "return"]
+            params = get_column_types(rdf, cols)
+            signature = f"({', '.join(params)})"
+        except Exception as e:
+            raise ValueError(f"Error while processing function annotations: {e}")
+    # try with cpp_signature decorator
+    elif hasattr(callback, "__cpp_ret__") and hasattr(callback, "__cpp_args__"):
+        ret_type = get_cpp_name(callback.__cpp_ret__)
+        params = [get_cpp_name(t) for t in callback.__cpp_args__ or []]
+        signature = f"({', '.join(params)})"
+        print("!! Using cpp_signature decorator info:", signature, ret_type)
+    else:
+        raise ValueError("Function annotations or cpp_signature decorator are required to create C++ wrapper.")
 
-    return ret
-
+    print("!! _PyDefine returning signature:", signature, " ret_type:", ret_type)
+    return cppyy._backend.CreateCallbackWrapper(callback, ret_type, signature)
 
 def _PyDefine(rdf, col_name, callable_or_str, cols=[], extra_args={}, numba_jit=False):
     """
@@ -546,8 +578,7 @@ def _PyDefine(rdf, col_name, callable_or_str, cols=[], extra_args={}, numba_jit=
         return rdf._OriginalDefine(col_name, "Numba::" + func_call)
     
     else:
-        wrapper_name = _create_cpp_wrapper(func)
-        print("!! cols:", cols)
+        wrapper_name = _create_cpp_wrapper(func, rdf, cols)
         func_call = f"{wrapper_name}({','.join(cols)})"
         print("!! PyDefine making func_call:", func_call)
         return rdf._OriginalDefine(col_name, func_call)
