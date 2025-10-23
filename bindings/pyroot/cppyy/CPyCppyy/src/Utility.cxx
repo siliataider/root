@@ -1289,23 +1289,25 @@ bool CPyCppyy::Utility::IncludePython()
 
 //----------------------------------------------------------------------------
 // TODO
-#include "DeclareConverters.h"
+#include "Converters.h"
+#include <iostream>
 std::string CPyCppyy::Utility::CreateCallbackWrapper(PyObject* callback, const std::string& ret_type, const std::string& signature)
 {
     // CPyCppyy::FunctionPointerConverter conv(ret_type, signature);
 
     std::string full_signature = ret_type + " (*)" + signature;
-    std::cout << "!! CreateCallbackWrapper for: " << full_signature << std::endl;
+    // std::cout << "!! CreateCallbackWrapper for: " << full_signature << std::endl;
     CPyCppyy::Converter* conv = CreateConverter(full_signature, 0);
 
     void* func_ptr = nullptr;
     bool ok = conv->ToMemory(callback, &func_ptr, nullptr);
     if (!ok) {
-        return "!! Converter could not build wrapper !!";
+        throw std::runtime_error("!! Converter could not build wrapper");
     }
 
     // TODO: need to find a way to get the name of the wrapper
-    // std::string wrapper_name = GetFunctionNameFromAddress(func_ptr);
+    return CPyCppyy::GetWrapperNameFromAddress(func_ptr);
 
-    return "__cppyy_internal::fptr_wrap1";
+    // return reinterpret_cast<std::uintptr_t>(func_ptr);
+    // return "__cppyy_internal::fptr_wrap1";
 }

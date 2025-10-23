@@ -516,13 +516,25 @@ def _create_cpp_wrapper(callback, rdf, cols):
         params = [get_cpp_name(t) for t in callback.__cpp_args__ or []]
         signature = f"({', '.join(params)})"
         print("!! Using cpp_signature decorator info:", signature, ret_type)
-    else:
-        raise ValueError("Function annotations or cpp_signature decorator are required to create C++ wrapper.")
+    # else:
+        # raise ValueError("Function annotations or cpp_signature decorator are required to create C++ wrapper.")
+    
 
-    print("!! _PyDefine returning signature:", signature, " ret_type:", ret_type)
-    return cppyy._backend.CreateCallbackWrapper(callback, ret_type, signature)
+    # ret_type = "double"
+    # signature = "(ROOT::Math::PtEtaPhiMVector)"
 
-def _PyDefine(rdf, col_name, callable_or_str, cols=[], extra_args={}, numba_jit=False):
+    print("!! _ PyDefine signature:", signature, " ret_type:", ret_type)
+
+    # import sys
+    # sys.exit(0)
+
+    # print("!! _PyDefine returning signature:", signature, " ret_type:", ret_type)
+    wrapper_name = cppyy._backend.CreateCallbackWrapper(callback, ret_type, signature)
+    # print("!! _PyDefine created wrapper:", wrapper_name)
+    return wrapper_name
+    # return "__cppyy_internal::fptr_wrap1"
+
+def _PyDefine(rdf, col_name, callable_or_str, cols=[], extra_args={}, numba_jit=True):
     """
     Defines a new column in the RDataFrame.
     Arguments:
@@ -580,5 +592,5 @@ def _PyDefine(rdf, col_name, callable_or_str, cols=[], extra_args={}, numba_jit=
     else:
         wrapper_name = _create_cpp_wrapper(func, rdf, cols)
         func_call = f"{wrapper_name}({','.join(cols)})"
-        print("!! PyDefine making func_call:", func_call)
+        # print("!! PyDefine making func_call:", func_call)
         return rdf._OriginalDefine(col_name, func_call)
