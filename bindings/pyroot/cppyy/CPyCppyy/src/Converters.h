@@ -82,6 +82,9 @@ protected:
     bool GetAddressSpecialCase(PyObject*, void*&) override { return false; }
 };
 
+// TODO
+std::string GetWrapperNameFromAddress(void*);
+
 } // namespace CPyCppyy
 
 #endif // !CPYCPPYY_CONVERTERS_H

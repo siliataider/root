@@ -16,6 +16,7 @@
 #include "Utility.h"
 
 // Standard
+#include <iostream>
 #include <complex>
 #include <limits.h>
 #include <stddef.h>      // for ptrdiff_t
@@ -2626,6 +2627,15 @@ static std::map<RetSigKey_t, std::vector<void*>> sWrapperFree;
 static std::map<RetSigKey_t, std::map<PyObject*, void*>> sWrapperLookup;
 static std::map<PyObject*, std::pair<void*, RetSigKey_t>> sWrapperWeakRefs;
 static std::map<void*, PyObject**> sWrapperReference;
+// TODO
+static std::unordered_map<void*, std::string> sWrapperNames;
+
+std::string CPyCppyy::GetWrapperNameFromAddress(void* addr)
+{
+    const auto& lookup = sWrapperNames.find(addr);
+    if (lookup != sWrapperNames.end()) return lookup->second;
+    return "";
+}
 
 static PyObject* WrapperCacheEraser(PyObject*, PyObject* pyref)
 {
@@ -2782,6 +2792,9 @@ static void* PyFunction_AsCPointer(PyObject* pyobject,
             const auto& idx = Cppyy::GetMethodIndicesFromName(scope, wname.str());
             wpraddress = Cppyy::GetFunctionAddress(Cppyy::GetMethod(scope, idx[0]), false);
             sWrapperReference[wpraddress] = ref;
+
+        // TODO
+            sWrapperNames[wpraddress] = "__cppyy_internal::" + wname.str();
 
         // cache the new wrapper
             sWrapperLookup[key][pyobject] = wpraddress;
