@@ -16,13 +16,17 @@
 #include "ROOT/RDF/RSampleInfo.hxx"
 #include "ROOT/RDF/Utils.hxx"
 #include "ROOT/RLogger.hxx"
+#include "ROOT/RTTreeDS.hxx"
 #include "RtypesCore.h"
 #include "TBranch.h"
 #include "TBranchElement.h"
+#include <TChain.h>
+#include "TChainElement.h"
 #include "TClass.h"
 #include "TClassEdit.h"
 #include "TClassRef.h"
 #include "TError.h" // Info
+#include "TFile.h"
 #include "TInterpreter.h"
 #include "TLeaf.h"
 #include "TROOT.h" // IsImplicitMTEnabled, GetThreadPoolSize
@@ -631,6 +635,57 @@ ROOT::RDF::Experimental::RDatasetSpec RetrieveSpecFromJson(const std::string &js
    }
    return spec;
 };
+
+
+std::vector<std::pair<ULong64_t, ULong64_t>> GetClusterRanges(ROOT::Detail::RDF::RLoopManager &lm)
+{
+   std::vector<std::pair<ULong64_t, ULong64_t>> ranges;
+
+   auto collectClusters = [&ranges](TTree *tree, Long64_t offset) -> Long64_t {
+      const Long64_t nEntries = tree->GetEntries();
+      auto it = tree->GetClusterIterator(0);
+      Long64_t start = 0;
+      while ((start = it()) < nEntries)
+         ranges.emplace_back(ULong64_t(offset + start),
+                             ULong64_t(offset + it.GetNextEntry()));
+      return nEntries;
+   };
+
+   if (auto *ds = lm.GetDataSource()) {
+      // TTree datasource
+      if (auto *ttreeds = dynamic_cast<ROOT::Internal::RDF::RTTreeDS *>(ds)) {
+         TTree *top = ttreeds->GetTree();
+         if (!top) {
+            return ranges;
+         }
+
+         if (auto *chain = dynamic_cast<TChain *>(top)) {
+            // multiple files: open each file individually to iterate clusters
+            TObjArray *files = chain->GetListOfFiles();
+            if (!files) {return ranges;}
+            Long64_t offset = 0;
+            for (int i = 0; i < files->GetEntries(); ++i) {
+               auto *el = static_cast<TChainElement *>(files->At(i));
+               if (!el) {continue;}
+               std::unique_ptr<TFile> f{TFile::Open(el->GetTitle(), "READ")};
+               if (!f || f->IsZombie()) {continue;}
+               auto *tree = f->Get<TTree>(el->GetName());
+               if (!tree) {continue;}
+               offset += collectClusters(tree, offset);
+            }
+         } else {
+            // single file
+            collectClusters(top, 0);
+         }
+         return ranges;
+      } else {
+         // non-TTree datasource: not supported yet
+         throw std::runtime_error("Cannot retrieve cluster ranges: the datasource of the loop manager is not a TTree.");
+      }
+   } else {
+      throw std::runtime_error("Cannot retrieve cluster ranges: the loop manager does not have a datasource.");
+   }
+}
 
 } // end NS RDF
 } // end NS Internal

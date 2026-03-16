@@ -48,6 +48,8 @@ class RDataSource;
 namespace Detail {
 namespace RDF {
 
+class RLoopManager;
+
 using ROOT::RDF::ColumnNames_t;
 
 ROOT::RLogChannel &RDFLogChannel();
@@ -345,6 +347,9 @@ ROOT::RDF::Experimental::RDatasetSpec RetrieveSpecFromJson(const std::string &js
  * See usage of this in RNTupleDS
  */
 struct UseNativeDataType {};
+
+
+std::vector<std::pair<ULong64_t, ULong64_t>> GetClusterRanges(RLoopManager &lm);
 
 } // end NS RDF
 } // end NS Internal

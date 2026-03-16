@@ -90,6 +90,7 @@ class BaseGenerator:
         self,
         rdataframes: ROOT.RDF.RNode | list[ROOT.RDF.RNode] | None = None,
         batch_size: int = 0,
+        buffer_batches: int = 1,
         chunk_size: int = 0,
         block_size: int = 0,
         columns: list[str] | None = None,
@@ -179,11 +180,11 @@ class BaseGenerator:
         if target is None or target == "":
             target = []
 
-        if not load_eager and chunk_size < batch_size:
-            raise ValueError(
-                f"chunk_size cannot be smaller than batch_size: chunk_size: \
-                    {chunk_size}, batch_size: {batch_size}"
-            )
+        # if not load_eager and chunk_size < batch_size:
+        #     raise ValueError(
+        #         f"chunk_size cannot be smaller than batch_size: chunk_size: \
+        #             {chunk_size}, batch_size: {batch_size}"
+        #     )
 
         if validation_split < 0.0 or validation_split > 1.0:
             raise ValueError(
@@ -251,14 +252,12 @@ class BaseGenerator:
 
         self.generator = ROOT.Experimental.Internal.ML.RBatchGenerator(template)(
             self.noded_rdfs,
-            chunk_size,
-            block_size,
             batch_size,
+            buffer_batches,
             self.given_columns,
             max_vec_sizes_list,
             vec_padding,
             validation_split,
-            max_chunks,
             shuffle,
             drop_remainder,
             set_seed,
@@ -1005,6 +1004,7 @@ def CreateTFDatasets(
 def CreatePyTorchGenerators(
     rdataframes: ROOT.RDF.RNode | list[ROOT.RDF.RNode] | None = None,
     batch_size: int = 0,
+    buffer_batches: int = 1,
     chunk_size: int = 0,
     block_size: int = 0,
     columns: list[str] | None = None,
@@ -1114,6 +1114,7 @@ def CreatePyTorchGenerators(
     base_generator = BaseGenerator(
         rdataframes,
         batch_size,
+        buffer_batches,
         chunk_size,
         block_size,
         columns,
@@ -1142,6 +1143,83 @@ def CreatePyTorchGenerators(
     return train_generator, validation_generator
 
 
+def RDataLoader(
+    rdataframes: ROOT.RDF.RNode | list[ROOT.RDF.RNode] | None = None,
+    batch_size: int = 0,
+    columns: list[str] | None = None,
+    backend: str = "numpy",
+    buffer_batches: int = 1,
+    target: str | list[str] | None = None,
+    validation_split: float = 0.0,
+    shuffle: bool = True,
+    drop_remainder=True,
+    set_seed: int = 0,
+    max_vec_sizes: dict[str, int] | None = None,
+    vec_padding: int = 0,
+    weights: str = "",
+    load_eager: bool = False,
+    sampling_type: str = "",
+    sampling_ratio: float = 1.0,
+    replacement: bool = False,
+) -> Tuple[TrainDataLoader, ValidationDataLoader | None]:
+    """
+    Create a data loader for ML training from a ROOT RDataFrame.
+
+    Args:
+        rdataframes: RDataFrame or list of RDataFrames to load from.
+        batch_size: Number of entries per batch.
+        columns: Names of columns to load.
+        backend: Output format ["numpy", "torch", "tensorflow"].
+        buffer_batches: Number of batches worth of data to keep in the shuffle
+            buffer. Controls the trade-off between randomness quality and memory
+            usage. A larger value gives better shuffling across cluster boundaries
+            at the cost of higher memory usage. Acts as a soft cap: the buffer may
+            temporarily exceed this by up to one cluster's worth of rows.
+        target: Name or list of names of target column(s).
+        validation_split: Fraction of data to reserve for validation. Must be
+            between 0 and 1. Defaults to 0.0.
+        shuffle: Whether to shuffle data across cluster boundaries every epoch.
+            Defaults to True.
+        drop_remainder: Drop the last batch if smaller than batch_size.
+            Defaults to True.
+        set_seed: Seed for the random number generator.
+        max_vec_sizes: Maximum size per vector column. Required for vector columns.
+        vec_padding: Padding value for vectors shorter than max_vec_sizes.
+        weights: Column to use for event weighting. Requires a target.
+
+    Returns:
+        TrainDataLoader if validation_split is 0, otherwise a tuple of
+        (TrainDataLoader, ValidationDataLoader).
+    """
+    _BACKENDS = {
+        "numpy":       CreateNumPyGenerators,
+        "torch":       CreatePyTorchGenerators,
+        "tensorflow":  CreateTFDatasets,
+    }
+
+    if backend not in _BACKENDS:
+        raise ValueError(f"Unsupported backend '{backend}'. Supported backends are: {list(_BACKENDS.keys())}")
+    
+    return _BACKENDS[backend](
+        rdataframes=rdataframes,
+        batch_size=batch_size,
+        columns=columns,
+        buffer_batches=buffer_batches,
+        target=target,
+        validation_split=validation_split,
+        shuffle=shuffle,
+        drop_remainder=drop_remainder,
+        set_seed=set_seed,
+        max_vec_sizes=max_vec_sizes,
+        vec_padding=vec_padding,
+        weights=weights,
+        load_eager=load_eager,
+        sampling_type=sampling_type,
+        sampling_ratio=sampling_ratio,
+        replacement=replacement,
+    )
+    
+
 def _inject_dataloader_api(parentmodule):
     """
     Inject the public Python API in the ROOT.IO.ML namespace. This includes the
@@ -1152,6 +1230,7 @@ def _inject_dataloader_api(parentmodule):
         CreateNumPyGenerators,
         CreateTFDatasets,
         CreatePyTorchGenerators,
+        RDataLoader,
     ]
 
     for python_func in fns:

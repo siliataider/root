@@ -35,6 +35,15 @@
 
 namespace ROOT::Experimental::Internal::ML {
 /**
+ * \struct RClusterRange
+ */
+struct RClusterRange {
+   std::size_t rdfIdx;  // which rdf this cluster belongs to
+   ULong64_t    start;    // first entry
+   ULong64_t    end;      // one-past-last entry
+};
+   
+/**
 \class ROOT::Experimental::Internal::ML::RChunkLoaderFunctor
 
 \brief Loading chunks made in RChunkLoader into tensors from data from RDataFrame.
@@ -111,366 +120,178 @@ mixed. The dataset is also spit into training and validation sets with the user-
 template <typename... Args>
 class RChunkLoader {
 private:
-   std::size_t fNumEntries;
-   std::size_t fChunkSize;
-   std::size_t fBlockSize;
-   float fValidationSplit;
-
-   std::vector<std::size_t> fVecSizes;
-   std::size_t fSumVecSizes;
-   std::size_t fVecPadding;
-   std::size_t fNumChunkCols;
-
-   std::size_t fNumTrainEntries;
-   std::size_t fNumValidationEntries;
-   std::unique_ptr<RFlat2DMatrixOperators> fTensorOperators;
-
-   ROOT::RDF::RNode &f_rdf;
+   std::vector<ROOT::RDF::RNode> &fRdfs;
    std::vector<std::string> fCols;
-   std::size_t fNumCols;
+   std::vector<std::size_t> fVecSizes;
+   float fVecPadding;
+   float fValidationSplit;
+   bool fShuffle;
    std::size_t fSetSeed;
 
-   bool fNotFiltered;
-   bool fShuffle;
+   std::size_t fNumCols;
+   std::size_t fSumVecSizes;
+   std::size_t fNumChunkCols;
 
-   ROOT::RDF::RResultPtr<std::vector<ULong64_t>> fEntries;
+   std::vector<RClusterRange> fAllClusters;
+   std::vector<RClusterRange> fTrainingClusters;
+   std::vector<RClusterRange> fValidationClusters;
 
-   std::unique_ptr<RChunkConstructor> fTraining;
-   std::unique_ptr<RChunkConstructor> fValidation;
+   std::size_t fNumTrainingEntries{0};
+   std::size_t fNumValidationEntries{0};
 
 public:
-   RChunkLoader(ROOT::RDF::RNode &rdf, const std::size_t chunkSize, const std::size_t blockSize,
-                const float validationSplit, const std::vector<std::string> &cols,
-                const std::vector<std::size_t> &vecSizes = {}, const float vecPadding = 0.0, bool shuffle = true,
-                const std::size_t setSeed = 0)
-      : f_rdf(rdf),
-        fCols(cols),
-        fVecSizes(vecSizes),
-        fVecPadding(vecPadding),
-        fChunkSize(chunkSize),
-        fBlockSize(blockSize),
-        fValidationSplit(validationSplit),
-        fNotFiltered(f_rdf.GetFilterNames().empty()),
-        fShuffle(shuffle),
-        fSetSeed(setSeed)
+   RChunkLoader(std::vector<ROOT::RDF::RNode> &rdfs,
+               const std::vector<std::string> &cols,
+               const std::vector<std::size_t> &vecSizes,
+               const float vecPadding,
+               const float validationSplit,
+               const bool shuffle,
+               const std::size_t setSeed)
+      : fRdfs(rdfs),
+         fCols(cols),
+         fVecSizes(vecSizes),
+         fVecPadding(vecPadding),
+         fValidationSplit(validationSplit),
+         fShuffle(shuffle),
+         fSetSeed(setSeed)
    {
-      fTensorOperators = std::make_unique<RFlat2DMatrixOperators>(fShuffle, fSetSeed);
-
-      fEntries = f_rdf.Take<ULong64_t>("rdfentry_");
-      fNumEntries = fEntries->size();
-
-      // add the last element in entries to not go out of range when filling chunks
-      fEntries->push_back((*fEntries)[fNumEntries - 1] + 1);
-
-      fNumCols = fCols.size();
-      fSumVecSizes = std::accumulate(fVecSizes.begin(), fVecSizes.end(), 0);
-
+      fNumCols     = fCols.size();
+      fSumVecSizes = std::accumulate(fVecSizes.begin(), fVecSizes.end(), 0UL);
       fNumChunkCols = fNumCols + fSumVecSizes - fVecSizes.size();
 
-      // number of training and validation entries after the split
-      fNumValidationEntries = static_cast<std::size_t>(fValidationSplit * fNumEntries);
-      fNumTrainEntries = fNumEntries - fNumValidationEntries;
-
-      fTraining = std::make_unique<RChunkConstructor>(fNumTrainEntries, fChunkSize, fBlockSize);
-      fValidation = std::make_unique<RChunkConstructor>(fNumValidationEntries, fChunkSize, fBlockSize);
+      // scan cluster boundaries across files
+      for (std::size_t rdfIdx = 0; rdfIdx < fRdfs.size(); ++rdfIdx) {
+         auto *lm = fRdfs[rdfIdx].GetLoopManager();
+         const auto ranges = ROOT::Internal::RDF::GetClusterRanges(*lm);
+         for (const auto &r : ranges)
+         fAllClusters.push_back({rdfIdx, r.first, r.second});
+      }
    }
 
    //////////////////////////////////////////////////////////////////////////
    /// \brief Distribute the blocks into training and validation datasets
    void SplitDataset()
    {
-      std::random_device rd;
-      std::mt19937 g;
+      const std::size_t numValidation = static_cast<std::size_t>(fValidationSplit * fAllClusters.size());
+      const std::size_t numTraining = fAllClusters.size() - numValidation;
 
-      if (fSetSeed == 0) {
-         g.seed(rd());
-      } else {
-         g.seed(fSetSeed);
-      }
-
-      std::vector<Long_t> BlockSizes = {};
-
-      // fill the training and validation block sizes
-      for (size_t i = 0; i < fTraining->NumberOfDifferentBlocks.size(); i++) {
-         BlockSizes.insert(BlockSizes.end(), fTraining->NumberOfDifferentBlocks[i], fTraining->SizeOfBlocks[i]);
-      }
-
-      for (size_t i = 0; i < fValidation->NumberOfDifferentBlocks.size(); i++) {
-         BlockSizes.insert(BlockSizes.end(), fValidation->NumberOfDifferentBlocks[i], fValidation->SizeOfBlocks[i]);
-      }
-
-      // make an identity permutation map
-      std::vector<Long_t> indices(BlockSizes.size());
-
-      for (int i = 0; i < indices.size(); ++i) {
-         indices[i] = i;
-      }
-
-      // shuffle the identity permutation to create a new permutation
+      // shuffle the cluster order before splitting into training and validation
       if (fShuffle) {
-         std::shuffle(indices.begin(), indices.end(), g);
+         std::mt19937 g(fSetSeed == 0 ? std::random_device{}() : fSetSeed);
+         std::shuffle(fAllClusters.begin(), fAllClusters.end(), g);
       }
 
-      // use the permuation to shuffle the vector of block sizes
-      std::vector<Long_t> PermutedBlockSizes(BlockSizes.size());
-      for (int i = 0; i < BlockSizes.size(); ++i) {
-         PermutedBlockSizes[i] = BlockSizes[indices[i]];
-      }
+      fTrainingClusters.assign(fAllClusters.begin(), fAllClusters.begin() + numTraining);
+      fValidationClusters.assign(fAllClusters.begin() + numTraining, fAllClusters.end());
 
-      // create a vector for storing the boundaries of the blocks
-      std::vector<Long_t> BlockBoundaries(BlockSizes.size());
-
-      // get the boundaries of the blocks with the partial sum of the block sizes
-      // insert 0 at the beginning for the lower boundary of the first block
-      std::partial_sum(PermutedBlockSizes.begin(), PermutedBlockSizes.end(), BlockBoundaries.begin());
-      BlockBoundaries.insert(BlockBoundaries.begin(), 0);
-
-      // distribute the neighbouring block boudaries into pairs to get the intevals for the blocks
-      std::vector<std::pair<Long_t, Long_t>> BlockIntervals;
-      for (size_t i = 0; i < BlockBoundaries.size() - 1; ++i) {
-         BlockIntervals.emplace_back(BlockBoundaries[i], BlockBoundaries[i + 1]);
-      }
-
-      // use the inverse of the permutation above to order the block intervals in the same order as
-      // the original vector of block sizes
-      std::vector<std::pair<Long_t, Long_t>> UnpermutedBlockIntervals(BlockIntervals.size());
-      for (int i = 0; i < BlockIntervals.size(); ++i) {
-         UnpermutedBlockIntervals[indices[i]] = BlockIntervals[i];
-      }
-
-      // distribute the block intervals between training and validation
-      fTraining->BlockIntervals.insert(fTraining->BlockIntervals.begin(), UnpermutedBlockIntervals.begin(),
-                                       UnpermutedBlockIntervals.begin() + fTraining->NumberOfBlocks);
-      fValidation->BlockIntervals.insert(fValidation->BlockIntervals.begin(),
-                                         UnpermutedBlockIntervals.begin() + fTraining->NumberOfBlocks,
-                                         UnpermutedBlockIntervals.end());
-
-      // distribute the different block intervals types for training and validation
-      fTraining->DistributeBlockIntervals();
-      fValidation->DistributeBlockIntervals();
+      for (const auto &c : fTrainingClusters) { fNumTrainingEntries += (c.end - c.start); }
+      for (const auto &c : fValidationClusters) { fNumValidationEntries += (c.end - c.start); }
    }
 
    //////////////////////////////////////////////////////////////////////////
-   /// \brief Create training chunks consisiting of block intervals of different types
-   void CreateTrainingChunksIntervals()
+   /// \brief Shuffle the training cluster order for the upcoming epoch.
+   ///
+   /// This is a pure index-level operation — no I/O. Called once per epoch
+   /// by the loading thread before it starts consuming clusters.
+   void ShuffleTrainingClusters()
    {
-
-      std::random_device rd;
-      std::mt19937 g;
-
-      if (fSetSeed == 0) {
-         g.seed(rd());
-      } else {
-         g.seed(fSetSeed);
-      }
-
-      // shuffle the block intervals within each type of block
-      if (fShuffle) {
-         std::shuffle(fTraining->FullBlockIntervalsInFullChunks.begin(),
-                      fTraining->FullBlockIntervalsInFullChunks.end(), g);
-         std::shuffle(fTraining->LeftoverBlockIntervalsInFullChunks.begin(),
-                      fTraining->LeftoverBlockIntervalsInFullChunks.end(), g);
-         std::shuffle(fTraining->FullBlockIntervalsInLeftoverChunks.begin(),
-                      fTraining->FullBlockIntervalsInLeftoverChunks.end(), g);
-         std::shuffle(fTraining->LeftoverBlockIntervalsInLeftoverChunks.begin(),
-                      fTraining->LeftoverBlockIntervalsInLeftoverChunks.end(), g);
-      }
-
-      // reset the chunk intervals and sizes before each epoch
-      fTraining->ChunksIntervals = {};
-      fTraining->ChunksSizes = {};
-
-      // create the chunks each consisiting of block intervals
-      fTraining->CreateChunksIntervals();
-
-      if (fShuffle) {
-         std::shuffle(fTraining->ChunksIntervals.begin(), fTraining->ChunksIntervals.end(), g);
-      }
-
-      fTraining->SizeOfChunks();
+      if (!fShuffle) return;
+      std::mt19937 g(fSetSeed == 0 ? std::random_device{}() : fSetSeed);
+      std::shuffle(fTrainingClusters.begin(), fTrainingClusters.end(), g);
    }
 
    //////////////////////////////////////////////////////////////////////////
-   /// \brief Create training chunks consisiting of block intervals of different types
-   void CreateValidationChunksIntervals()
+   /// \brief Shuffle the validation cluster order for the upcoming epoch.
+   void ShuffleValidationClusters()
    {
-      std::random_device rd;
-      std::mt19937 g;
-
-      if (fSetSeed == 0) {
-         g.seed(rd());
-      } else {
-         g.seed(fSetSeed);
-      }
-
-      if (fShuffle) {
-         std::shuffle(fValidation->FullBlockIntervalsInFullChunks.begin(),
-                      fValidation->FullBlockIntervalsInFullChunks.end(), g);
-         std::shuffle(fValidation->LeftoverBlockIntervalsInFullChunks.begin(),
-                      fValidation->LeftoverBlockIntervalsInFullChunks.end(), g);
-         std::shuffle(fValidation->FullBlockIntervalsInLeftoverChunks.begin(),
-                      fValidation->FullBlockIntervalsInLeftoverChunks.end(), g);
-         std::shuffle(fValidation->LeftoverBlockIntervalsInLeftoverChunks.begin(),
-                      fValidation->LeftoverBlockIntervalsInLeftoverChunks.end(), g);
-      }
-
-      fValidation->ChunksIntervals = {};
-      fValidation->ChunksSizes = {};
-
-      fValidation->CreateChunksIntervals();
-
-      if (fShuffle) {
-         std::shuffle(fValidation->ChunksIntervals.begin(), fValidation->ChunksIntervals.end(), g);
-      }
-
-      fValidation->SizeOfChunks();
+      if (!fShuffle) return;
+      std::mt19937 g(fSetSeed == 0 ? std::random_device{}() : fSetSeed);
+      std::shuffle(fValidationClusters.begin(), fValidationClusters.end(), g);
    }
 
    //////////////////////////////////////////////////////////////////////////
-   /// \brief Load the nth chunk from the training dataset into a tensor
-   /// \param[in] TrainChunkTensor RTensor for the training chunk
-   /// \param[in] chunk Index of the chunk in the dataset
-   void LoadTrainingChunk(RFlat2DMatrix &TrainChunkTensor, std::size_t chunk)
+   /// \brief Load one whole cluster into a flat matrix.
+   ///
+   /// Always reads an entire cluster — never splits across cluster boundaries.
+   /// The output tensor is replaced (not appended to) by the cluster's rows.
+   ///
+   /// \param[out] tensor   Destination matrix, resized to (clusterSize, numCols).
+   /// \param[in]  clusters Which cluster list to draw from (training or validation).
+   /// \param[in]  idx      Index into that cluster list.
+   void LoadCluster(RFlat2DMatrix &tensor, const std::vector<RClusterRange> &clusters, std::size_t idx)
    {
+      const RClusterRange &c = clusters[idx];
+      const std::size_t clusterSize = static_cast<std::size_t>(c.end - c.start);
 
-      std::size_t chunkSize = fTraining->ChunksSizes[chunk];
+      RFlat2DMatrix tmp(clusterSize, fNumChunkCols);
 
-      if (chunk < fTraining->Chunks) {
-         RFlat2DMatrix Tensor(chunkSize, fNumChunkCols);
+      ROOT::RDF::RNode &rdf = fRdfs[c.rdfIdx];
+      ROOT::Internal::RDF::ChangeBeginAndEndEntries(rdf, c.start, c.end);
 
-         // fill a chunk by looping over the blocks in a chunk (see RChunkConstructor)
-         std::size_t chunkEntry = 0;
-         std::vector<std::pair<Long_t, Long_t>> BlocksInChunk = fTraining->ChunksIntervals[chunk];
-
-         std::sort(
-            BlocksInChunk.begin(), BlocksInChunk.end(),
-            [](const std::pair<Long_t, Long_t> &a, const std::pair<Long_t, Long_t> &b) { return a.first < b.first; });
-
-         for (std::size_t i = 0; i < BlocksInChunk.size(); i++) {
-
-            // Use the block start and end entry to load into the chunk if the dataframe is not filtered
-            if (fNotFiltered) {
-               RChunkLoaderFunctor<Args...> func(Tensor, fNumChunkCols, fVecSizes, fVecPadding, chunkEntry);
-               ROOT::Internal::RDF::ChangeBeginAndEndEntries(f_rdf, BlocksInChunk[i].first, BlocksInChunk[i].second);
-
-               f_rdf.Foreach(func, fCols);
-               chunkEntry += BlocksInChunk[i].second - BlocksInChunk[i].first;
-            }
-
-            // use the entry column of the dataframe as a map to load the entries that passed the filters
-            else {
-               std::size_t blockSize = BlocksInChunk[i].second - BlocksInChunk[i].first;
-               for (std::size_t j = 0; j < blockSize; j++) {
-                  RChunkLoaderFunctor<Args...> func(Tensor, fNumChunkCols, fVecSizes, fVecPadding, chunkEntry);
-                  ROOT::Internal::RDF::ChangeBeginAndEndEntries(f_rdf, (*fEntries)[BlocksInChunk[i].first + j],
-                                                                (*fEntries)[BlocksInChunk[i].first + j + 1]);
-                  f_rdf.Foreach(func, fCols);
-                  chunkEntry++;
-               }
-            }
-         }
-
-         // reset dataframe
-         ROOT::Internal::RDF::ChangeBeginAndEndEntries(f_rdf, (*fEntries)[0], (*fEntries)[fNumEntries]);
-
-         // shuffle the data in the chunk tensor
-         fTensorOperators->ShuffleTensor(TrainChunkTensor, Tensor);
+      for (std::size_t row = 0; row < clusterSize; ++row) {
+         RChunkLoaderFunctor<Args...> func(tmp, fNumChunkCols, fVecSizes, fVecPadding, row);
+         rdf.Foreach(func, fCols);
       }
+
+      // reset the dataframe range after loading
+      ROOT::Internal::RDF::ChangeBeginAndEndEntries(rdf, 0, clusterSize);
+
+      tensor = std::move(tmp);
+   }
+
+   // convenience wrappers used by the loading thread
+   void LoadTrainingCluster(RFlat2DMatrix &tensor, std::size_t idx)
+   {
+      LoadCluster(tensor, fTrainingClusters, idx);
+   }
+
+   void LoadValidationCluster(RFlat2DMatrix &tensor, std::size_t idx)
+   {
+      LoadCluster(tensor, fValidationClusters, idx);
    }
 
    //////////////////////////////////////////////////////////////////////////
-   /// \brief Load the nth chunk from the validation dataset into a tensor
-   /// \param[in] ValidationChunkTensor RTensor for the validation chunk
-   /// \param[in] chunk Index of the chunk in the dataset
-   void LoadValidationChunk(RFlat2DMatrix &ValidationChunkTensor, std::size_t chunk)
+   // Accessors
+   std::size_t GetNumTrainingEntries()   const { return fNumTrainingEntries; }
+   std::size_t GetNumValidationEntries() const { return fNumValidationEntries; }
+   std::size_t GetNumTrainingClusters()  const { return fTrainingClusters.size(); }
+   std::size_t GetNumValidationClusters() const { return fValidationClusters.size(); }
+
+   const std::vector<RClusterRange> &GetTrainingClusters()   const { return fTrainingClusters; }
+   const std::vector<RClusterRange> &GetValidationClusters() const { return fValidationClusters; }
+
+
+   // DBG
+   void PrintClusterInfo(const std::string &label = "") const
    {
+      if (!label.empty())
+         std::cout << "\n=== " << label << " ===\n";
 
-      std::size_t chunkSize = fValidation->ChunksSizes[chunk];
+      std::cout << "Total clusters : " << fAllClusters.size()
+               << "  (entries: ";
+      std::size_t total = 0;
+      for (const auto &c : fAllClusters) total += c.end - c.start;
+      std::cout << total << ")\n";
 
-      if (chunk < fValidation->Chunks) {
-         RFlat2DMatrix Tensor(chunkSize, fNumChunkCols);
-
-         std::size_t chunkEntry = 0;
-         std::vector<std::pair<Long_t, Long_t>> BlocksInChunk = fValidation->ChunksIntervals[chunk];
-
-         std::sort(
-            BlocksInChunk.begin(), BlocksInChunk.end(),
-            [](const std::pair<Long_t, Long_t> &a, const std::pair<Long_t, Long_t> &b) { return a.first < b.first; });
-
-         for (std::size_t i = 0; i < BlocksInChunk.size(); i++) {
-
-            // use the block start and end entry to load into the chunk if the dataframe is not filtered
-            if (fNotFiltered) {
-               RChunkLoaderFunctor<Args...> func(Tensor, fNumChunkCols, fVecSizes, fVecPadding, chunkEntry);
-               ROOT::Internal::RDF::ChangeBeginAndEndEntries(f_rdf, BlocksInChunk[i].first, BlocksInChunk[i].second);
-               f_rdf.Foreach(func, fCols);
-               chunkEntry += BlocksInChunk[i].second - BlocksInChunk[i].first;
-            }
-
-            // use the entry column of the dataframe as a map to load the entries that passed the filters
-            else {
-               std::size_t blockSize = BlocksInChunk[i].second - BlocksInChunk[i].first;
-               for (std::size_t j = 0; j < blockSize; j++) {
-                  RChunkLoaderFunctor<Args...> func(Tensor, fNumChunkCols, fVecSizes, fVecPadding, chunkEntry);
-                  ROOT::Internal::RDF::ChangeBeginAndEndEntries(f_rdf, (*fEntries)[BlocksInChunk[i].first + j],
-                                                                (*fEntries)[BlocksInChunk[i].first + j + 1]);
-
-                  f_rdf.Foreach(func, fCols);
-                  chunkEntry++;
-               }
-            }
-         }
-
-         // reset dataframe
-         ROOT::Internal::RDF::ChangeBeginAndEndEntries(f_rdf, (*fEntries)[0], (*fEntries)[fNumEntries]);
-
-         // shuffle the data in the chunk tensor
-         fTensorOperators->ShuffleTensor(ValidationChunkTensor, Tensor);
+      std::cout << "Training clusters  : " << fTrainingClusters.size()
+               << "  (entries: " << fNumTrainingEntries << ")\n";
+      for (std::size_t i = 0; i < fTrainingClusters.size(); ++i) {
+         const auto &c = fTrainingClusters[i];
+         std::cout << "  [" << i << "] rdf=" << c.rdfIdx
+                  << "  entries=[" << c.start << ", " << c.end << ")"
+                  << "  size=" << (c.end - c.start) << "\n";
       }
+
+      std::cout << "Validation clusters: " << fValidationClusters.size()
+               << "  (entries: " << fNumValidationEntries << ")\n";
+      for (std::size_t i = 0; i < fValidationClusters.size(); ++i) {
+         const auto &c = fValidationClusters[i];
+         std::cout << "  [" << i << "] rdf=" << c.rdfIdx
+                  << "  entries=[" << c.start << ", " << c.end << ")"
+                  << "  size=" << (c.end - c.start) << "\n";
+      }
+      std::cout << std::flush;
    }
-
-   void ResetDataframe() { ROOT::Internal::RDF::ChangeBeginAndEndEntries(f_rdf, 0, fNumEntries); }
-
-   std::vector<std::size_t> GetTrainingChunkSizes() { return fTraining->ChunksSizes; }
-   std::vector<std::size_t> GetValidationChunkSizes() { return fValidation->ChunksSizes; }
-
-   std::size_t GetNumTrainingEntries() { return fNumTrainEntries; }
-   std::size_t GetNumValidationEntries() { return fNumValidationEntries; }
-
-   void CheckIfUnique(RFlat2DMatrix &Tensor)
-   {
-      const auto &rvec = Tensor.fRVec;
-      if (std::set<float>(rvec.begin(), rvec.end()).size() == rvec.size()) {
-         std::cout << "Tensor consists of only unique elements" << std::endl;
-      }
-   };
-
-   void CheckIfOverlap(RFlat2DMatrix &Tensor1, RFlat2DMatrix &Tensor2)
-   {
-      std::set<float> result;
-
-      // Call the set_intersection(), which computes the
-      // intersection of set1 and set2 and
-      // inserts the result into the 'result' set
-      std::set<float> set1(Tensor1.fRVec.begin(), Tensor1.fRVec.end());
-      std::set<float> set2(Tensor2.fRVec.begin(), Tensor2.fRVec.end());
-      std::set_intersection(set1.begin(), set1.end(), set2.begin(), set2.end(), std::inserter(result, result.begin()));
-      // std::list<int> result = intersection(allEntries1, allEntries2);
-
-      if (result.size() == 0) {
-         std::cout << "No overlap between the tensors" << std::endl;
-      } else {
-         std::cout << "Intersection between tensors: ";
-         for (auto num : result) {
-            std::cout << num << " ";
-         }
-         std::cout << std::endl;
-      }
-   };
-
-   std::size_t GetNumTrainingChunks() { return fTraining->Chunks; }
-
-   std::size_t GetNumValidationChunks() { return fValidation->Chunks; }
 };
 
 } // namespace ROOT::Experimental::Internal::ML

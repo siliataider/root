@@ -50,11 +50,23 @@ class RBatchGenerator {
 private:
    std::vector<std::string> fCols;
    std::vector<std::size_t> fVecSizes;
-   std::size_t fChunkSize;
-   std::size_t fMaxChunks;
+   // std::size_t fChunkSize;
+   // std::size_t fMaxChunks;
    std::size_t fBatchSize;
-   std::size_t fBlockSize;
+   // std::size_t fBlockSize;
    std::size_t fSetSeed;
+
+   // cluster tables
+   std::vector<RClusterRange> fClusterTable;
+   std::vector<RClusterRange> fTrainingClusters;
+   std::vector<RClusterRange> fValidationClusters;
+
+   // buffer quantities
+   std::size_t fBufferBatches;
+   std::size_t fBufferCapacity;
+   std::size_t fLowWatermark;
+   std::size_t fHighWatermark;
+   std::size_t fNumTotalEntries{0};
 
    float fValidationSplit;
 
@@ -84,7 +96,7 @@ private:
    bool fReplacement;
 
    bool fIsActive{false}; // Whether the loading thread is active
-   bool fUseWholeFile;
+   // bool fUseWholeFile;
 
    bool fEpochActive{false};
    bool fTrainingEpochActive{false};
@@ -93,6 +105,7 @@ private:
    std::size_t fNumTrainingEntries;
    std::size_t fNumValidationEntries;
 
+   // TODO remove
    std::size_t fNumTrainingChunks;
    std::size_t fNumValidationChunks;
 
@@ -111,81 +124,76 @@ private:
    RFlat2DMatrix fValidationChunkTensor;
 
 public:
-   RBatchGenerator(const std::vector<ROOT::RDF::RNode> &rdfs, const std::size_t chunkSize, const std::size_t blockSize,
-                   const std::size_t batchSize, const std::vector<std::string> &cols,
-                   const std::vector<std::size_t> &vecSizes = {}, const float vecPadding = 0.0,
-                   const float validationSplit = 0.0, const std::size_t maxChunks = 0, bool shuffle = true,
-                   bool dropRemainder = true, const std::size_t setSeed = 0, bool loadEager = false,
-                   std::string sampleType = "", float sampleRatio = 1.0, bool replacement = false)
-
-      : fRdfs(rdfs),
-        fCols(cols),
-        fVecSizes(vecSizes),
-        fChunkSize(chunkSize),
-        fBlockSize(blockSize),
-        fBatchSize(batchSize),
-        fValidationSplit(validationSplit),
-        fMaxChunks(maxChunks),
-        fDropRemainder(dropRemainder),
-        fSetSeed(setSeed),
-        fShuffle(shuffle),
-        fLoadEager(loadEager),
-        fSampleType(sampleType),
-        fSampleRatio(sampleRatio),
-        fReplacement(replacement),
-        fUseWholeFile(maxChunks == 0)
+   RBatchGenerator(const std::vector<ROOT::RDF::RNode> &rdfs,
+                  const std::size_t batchSize,
+                  const std::size_t bufferBatches,
+                  const std::vector<std::string> &cols,
+                  const std::vector<std::size_t> &vecSizes = {},
+                  const float vecPadding = 0.0,
+                  const float validationSplit = 0.0,
+                  bool shuffle = true,
+                  bool dropRemainder = true,
+                  const std::size_t setSeed = 0,
+                  bool loadEager = false,
+                  std::string sampleType = "",
+                  float sampleRatio = 1.0,
+                  bool replacement = false)
+      :  fRdfs(rdfs),
+         fCols(cols),
+         fVecSizes(vecSizes),
+         fBatchSize(batchSize),
+         fBufferBatches(bufferBatches),
+         fValidationSplit(validationSplit),
+         fDropRemainder(dropRemainder),
+         fSetSeed(setSeed),
+         fShuffle(shuffle),
+         fLoadEager(loadEager),
+         fSampleType(sampleType),
+         fSampleRatio(sampleRatio),
+         fReplacement(replacement)
    {
       fTensorOperators = std::make_unique<RFlat2DMatrixOperators>(fShuffle, fSetSeed);
 
       if (fLoadEager) {
-         fDatasetLoader = std::make_unique<RDatasetLoader<Args...>>(fRdfs, fValidationSplit, fCols, fVecSizes,
-                                                                    vecPadding, fShuffle, fSetSeed);
-         // split the datasets and extract the training and validation datasets
+         fDatasetLoader = std::make_unique<RDatasetLoader<Args...>>(fRdfs, fValidationSplit, fCols, fVecSizes, vecPadding, fShuffle, fSetSeed);
          fDatasetLoader->SplitDatasets();
 
          if (fSampleType == "") {
             fDatasetLoader->ConcatenateDatasets();
-
-            fTrainingDataset = fDatasetLoader->GetTrainingDataset();
+            fTrainingDataset   = fDatasetLoader->GetTrainingDataset();
             fValidationDataset = fDatasetLoader->GetValidationDataset();
-
-            fNumTrainingEntries = fDatasetLoader->GetNumTrainingEntries();
+            fNumTrainingEntries   = fDatasetLoader->GetNumTrainingEntries();
             fNumValidationEntries = fDatasetLoader->GetNumValidationEntries();
-         }
-
-         else {
-            fTrainingDatasets = fDatasetLoader->GetTrainingDatasets();
+         } else {
+            fTrainingDatasets   = fDatasetLoader->GetTrainingDatasets();
             fValidationDatasets = fDatasetLoader->GetValidationDatasets();
-
-            fTrainingSampler = std::make_unique<RSampler>(fTrainingDatasets, fSampleType, fSampleRatio, fReplacement,
-                                                          fShuffle, fSetSeed);
-            fValidationSampler = std::make_unique<RSampler>(fValidationDatasets, fSampleType, fSampleRatio,
-                                                            fReplacement, fShuffle, fSetSeed);
-
-            fNumTrainingEntries = fTrainingSampler->GetNumEntries();
+            fTrainingSampler = std::make_unique<RSampler>(fTrainingDatasets, fSampleType, fSampleRatio, fReplacement, fShuffle, fSetSeed);
+            fValidationSampler = std::make_unique<RSampler>(fValidationDatasets, fSampleType, fSampleRatio, fReplacement, fShuffle, fSetSeed);
+            fNumTrainingEntries   = fTrainingSampler->GetNumEntries();
             fNumValidationEntries = fValidationSampler->GetNumEntries();
          }
-      }
 
-      else {
-         fChunkLoader = std::make_unique<RChunkLoader<Args...>>(fRdfs[0], fChunkSize, fBlockSize, fValidationSplit,
-                                                                fCols, fVecSizes, vecPadding, fShuffle, fSetSeed);
+      } else {
+         // scan cluster metadata
+         fChunkLoader = std::make_unique<RChunkLoader<Args...>>(fRdfs, fCols, fVecSizes, vecPadding, fValidationSplit, fShuffle, fSetSeed);
 
-         // split the dataset into training and validation sets
+         // split cluster list into training and validation
          fChunkLoader->SplitDataset();
 
-         fNumTrainingEntries = fChunkLoader->GetNumTrainingEntries();
+         // fChunkLoader->PrintClusterInfo("All clusters");
+
+         fNumTrainingEntries   = fChunkLoader->GetNumTrainingEntries();
          fNumValidationEntries = fChunkLoader->GetNumValidationEntries();
 
-         // number of training and validation chunks, calculated in RChunkConstructor
-         fNumTrainingChunks = fChunkLoader->GetNumTrainingChunks();
-         fNumValidationChunks = fChunkLoader->GetNumValidationChunks();
+         // derive buffer quantities
+         fBufferCapacity = fBatchSize * fBufferBatches;
+         fLowWatermark   = fBufferCapacity / 2;
+         fHighWatermark  = fBufferCapacity;
       }
 
-      fTrainingBatchLoader = std::make_unique<RBatchLoader>(fBatchSize, fCols, fLoadingMutex, fLoadingCondition,
-                                                            fVecSizes, fNumTrainingEntries, fDropRemainder);
-      fValidationBatchLoader = std::make_unique<RBatchLoader>(fBatchSize, fCols, fLoadingMutex, fLoadingCondition,
-                                                              fVecSizes, fNumValidationEntries, fDropRemainder);
+      // batch loaders
+      fTrainingBatchLoader = std::make_unique<RBatchLoader>(fBatchSize, fCols, fLoadingMutex, fLoadingCondition, fVecSizes, fNumTrainingEntries, fDropRemainder);
+      fValidationBatchLoader = std::make_unique<RBatchLoader>(fBatchSize, fCols, fLoadingMutex, fLoadingCondition, fVecSizes, fNumValidationEntries, fDropRemainder);
    }
 
    ~RBatchGenerator() { DeActivate(); }
@@ -287,7 +295,6 @@ public:
       // quickly. With this, the maximum queue size will be approximately fChunkSize*1.5.
       // TODO(staider): improve this heuristic by taking into consideration a "maximum number of batches in memory" set
       // by the user.
-      const std::size_t kMinQueuedBatches = std::max<std::size_t>(1, (fChunkSize / fBatchSize) / 2);
 
       std::unique_lock<std::mutex> lock(fLoadingMutex);
 
@@ -307,7 +314,7 @@ public:
                return false;
             if (fValidationBatchLoader->isProducerDone())
                return false;
-            return fValidationBatchLoader->GetNumBatchQueue() < kMinQueuedBatches;
+            return fValidationBatchLoader->GetNumBatchQueue() < fLowWatermark;
          };
 
          // -- TRAINING --
@@ -332,10 +339,10 @@ public:
 
                // If queue is not empty, wait until it drains below watermark, or validation needs data, or we are
                // deactivated.
-               if (fTrainingBatchLoader->GetNumBatchQueue() >= kMinQueuedBatches) {
+               if (fTrainingBatchLoader->GetNumBatchQueue() >= fLowWatermark) {
                   fLoadingCondition.wait(lock, [&] {
                      return !fIsActive || !fTrainingEpochActive ||
-                            fTrainingBatchLoader->GetNumBatchQueue() < kMinQueuedBatches || validationEmpty();
+                            fTrainingBatchLoader->GetNumBatchQueue() < fLowWatermark || validationEmpty();
                   });
                   continue;
                }
@@ -368,10 +375,10 @@ public:
                }
 
                // If queue is not hungry, wait until it drains below watermark, or we are deactivated
-               if (fValidationBatchLoader->GetNumBatchQueue() >= kMinQueuedBatches) {
+               if (fValidationBatchLoader->GetNumBatchQueue() >= fLowWatermark) {
                   fLoadingCondition.wait(lock, [&] {
                      return !fIsActive || !fValidationEpochActive ||
-                            fValidationBatchLoader->GetNumBatchQueue() < kMinQueuedBatches;
+                            fValidationBatchLoader->GetNumBatchQueue() < fLowWatermark;
                   });
                   continue;
                }
