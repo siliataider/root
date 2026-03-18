@@ -41,6 +41,7 @@ struct RClusterRange {
    std::size_t rdfIdx;  // which rdf this cluster belongs to
    ULong64_t    start;    // first entry
    ULong64_t    end;      // one-past-last entry
+   std::size_t numEntries() const { return end - start; }
 };
    
 /**
@@ -107,7 +108,7 @@ public:
 };
 
 /**
-\class ROOT::Experimental::Internal::ML::RChunkLoader
+\class ROOT::Experimental::Internal::ML::RClusterLoader
 
 \brief Building and loading the chunks from the blocks and chunks constructed in RChunkConstructor
 
@@ -118,7 +119,7 @@ mixed. The dataset is also spit into training and validation sets with the user-
 */
 
 template <typename... Args>
-class RChunkLoader {
+class RClusterLoader {
 private:
    std::vector<ROOT::RDF::RNode> &fRdfs;
    std::vector<std::string> fCols;
@@ -136,11 +137,12 @@ private:
    std::vector<RClusterRange> fTrainingClusters;
    std::vector<RClusterRange> fValidationClusters;
 
+   std::size_t fTotalEntries{0};
    std::size_t fNumTrainingEntries{0};
    std::size_t fNumValidationEntries{0};
 
 public:
-   RChunkLoader(std::vector<ROOT::RDF::RNode> &rdfs,
+RClusterLoader(std::vector<ROOT::RDF::RNode> &rdfs,
                const std::vector<std::string> &cols,
                const std::vector<std::size_t> &vecSizes,
                const float vecPadding,
@@ -166,26 +168,75 @@ public:
          for (const auto &r : ranges)
          fAllClusters.push_back({rdfIdx, r.first, r.second});
       }
+
+      for (const auto &c : fAllClusters) {
+         fTotalEntries += c.numEntries();
+      }
    }
 
    //////////////////////////////////////////////////////////////////////////
-   /// \brief Distribute the blocks into training and validation datasets
+   /// \brief Distribute the clusters into training and validation datasets
    void SplitDataset()
    {
-      const std::size_t numValidation = static_cast<std::size_t>(fValidationSplit * fAllClusters.size());
-      const std::size_t numTraining = fAllClusters.size() - numValidation;
-
-      // shuffle the cluster order before splitting into training and validation
+      if (fAllClusters.empty())
+         throw std::runtime_error("RClusterLoader::SplitDataset: no clusters found.");
+   
       if (fShuffle) {
          std::mt19937 g(fSetSeed == 0 ? std::random_device{}() : fSetSeed);
          std::shuffle(fAllClusters.begin(), fAllClusters.end(), g);
       }
-
-      fTrainingClusters.assign(fAllClusters.begin(), fAllClusters.begin() + numTraining);
-      fValidationClusters.assign(fAllClusters.begin() + numTraining, fAllClusters.end());
-
-      for (const auto &c : fTrainingClusters) { fNumTrainingEntries += (c.end - c.start); }
-      for (const auto &c : fValidationClusters) { fNumValidationEntries += (c.end - c.start); }
+   
+      const std::size_t targetTraining = fTotalEntries - static_cast<std::size_t>(fValidationSplit * fTotalEntries);
+   
+      // fill training with whole clusters
+      std::size_t accumulated = 0;
+      std::size_t splitIdx = 0;
+      for (std::size_t i = 0; i < fAllClusters.size(); ++i) {
+         const std::size_t sz = fAllClusters[i].numEntries();
+         if (accumulated + sz <= targetTraining) {
+            accumulated += sz;
+            splitIdx = i + 1;
+         } else {
+            break;
+         }
+      }
+   
+      // handle the boundary cluster if exact split is needed
+      // splitIdx points at the first cluster that would overflow training
+      // If accumulated < targetTraining, split that cluster at the boundary entry
+      if (splitIdx < fAllClusters.size() && accumulated < targetTraining) {
+         const RClusterRange &boundary = fAllClusters[splitIdx];
+         const std::size_t gap = targetTraining - accumulated;
+   
+         // training gets [start, start+gap), validation gets [start+gap, end)
+         RClusterRange trainPart  = {boundary.rdfIdx, boundary.start, boundary.start + static_cast<ULong64_t>(gap)};
+         RClusterRange validPart  = {boundary.rdfIdx, boundary.start + static_cast<ULong64_t>(gap), boundary.end};
+   
+         // training: all whole clusters before splitIdx + the train part
+         fTrainingClusters.assign(fAllClusters.begin(), fAllClusters.begin() + splitIdx);
+         fTrainingClusters.push_back(trainPart);
+   
+         // validation: the validation part + all whole clusters after splitIdx
+         fValidationClusters.push_back(validPart);
+         fValidationClusters.insert(fValidationClusters.end(), fAllClusters.begin() + splitIdx + 1, fAllClusters.end());
+      } else {
+         // no splitting needed
+         fTrainingClusters.assign(fAllClusters.begin(), fAllClusters.begin() + splitIdx);
+         fValidationClusters.assign(fAllClusters.begin() + splitIdx, fAllClusters.end());
+      }
+   
+      if (fTrainingClusters.empty())
+         throw std::runtime_error(
+            "RClusterLoader::SplitDataset: no entries for training after split. "
+            "Reduce validation_split.");
+   
+      if (fValidationSplit > 0.0f && fValidationClusters.empty())
+         throw std::runtime_error(
+            "RClusterLoader::SplitDataset: no entries for validation after split. "
+            "Increase validation_split.");
+   
+      for (const auto &c : fTrainingClusters)  fNumTrainingEntries  += c.numEntries();
+      for (const auto &c : fValidationClusters) fNumValidationEntries += c.numEntries();
    }
 
    //////////////////////////////////////////////////////////////////////////
@@ -220,6 +271,7 @@ public:
    /// \param[in]  idx      Index into that cluster list.
    void LoadCluster(RFlat2DMatrix &tensor, const std::vector<RClusterRange> &clusters, std::size_t idx)
    {
+      // std::cout << "RClusterLoader: Loading cluster " << idx + 1 << " / " << clusters.size() << "\n";
       const RClusterRange &c = clusters[idx];
       const std::size_t clusterSize = static_cast<std::size_t>(c.end - c.start);
 
@@ -228,13 +280,11 @@ public:
       ROOT::RDF::RNode &rdf = fRdfs[c.rdfIdx];
       ROOT::Internal::RDF::ChangeBeginAndEndEntries(rdf, c.start, c.end);
 
-      for (std::size_t row = 0; row < clusterSize; ++row) {
-         RChunkLoaderFunctor<Args...> func(tmp, fNumChunkCols, fVecSizes, fVecPadding, row);
-         rdf.Foreach(func, fCols);
-      }
+      RChunkLoaderFunctor<Args...> func(tmp, fNumChunkCols, fVecSizes, fVecPadding, /*startRow=*/0);
+      rdf.Foreach(func, fCols);
 
       // reset the dataframe range after loading
-      ROOT::Internal::RDF::ChangeBeginAndEndEntries(rdf, 0, clusterSize);
+      ROOT::Internal::RDF::ChangeBeginAndEndEntries(rdf, 0, fTotalEntries);
 
       tensor = std::move(tmp);
    }

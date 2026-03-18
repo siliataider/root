@@ -24,7 +24,7 @@
 #include <vector>
 
 #include "ROOT/ML/RBatchLoader.hxx"
-#include "ROOT/ML/RChunkLoader.hxx"
+#include "ROOT/ML/RClusterLoader.hxx"
 #include "ROOT/ML/RDatasetLoader.hxx"
 #include "ROOT/ML/RFlat2DMatrix.hxx"
 #include "ROOT/ML/RFlat2DMatrixOperators.hxx"
@@ -40,7 +40,7 @@ namespace ROOT::Experimental::Internal::ML {
  \class ROOT::Experimental::Internal::ML::RBatchGenerator
 \brief
 
-In this class, the processes of loading chunks (see RChunkLoader) and creating batches from those chunks (see
+In this class, the processes of loading chunks (see RClusterLoader) and creating batches from those chunks (see
 RBatchLoader) are combined, allowing batches from the training and validation sets to be loaded directly from a dataset
 in an RDataFrame.
 */
@@ -50,10 +50,7 @@ class RBatchGenerator {
 private:
    std::vector<std::string> fCols;
    std::vector<std::size_t> fVecSizes;
-   // std::size_t fChunkSize;
-   // std::size_t fMaxChunks;
    std::size_t fBatchSize;
-   // std::size_t fBlockSize;
    std::size_t fSetSeed;
 
    // cluster tables
@@ -68,10 +65,15 @@ private:
    std::size_t fHighWatermark;
    std::size_t fNumTotalEntries{0};
 
+   std::size_t fTrainingClusterIdx{0};
+   std::size_t fValidationClusterIdx{0};
+   RFlat2DMatrix fTrainBuffer;
+   RFlat2DMatrix fValidationBuffer;
+
    float fValidationSplit;
 
    std::unique_ptr<RDatasetLoader<Args...>> fDatasetLoader;
-   std::unique_ptr<RChunkLoader<Args...>> fChunkLoader;
+   std::unique_ptr<RClusterLoader<Args...>> fClusterLoader;
    std::unique_ptr<RBatchLoader> fTrainingBatchLoader;
    std::unique_ptr<RBatchLoader> fValidationBatchLoader;
    std::unique_ptr<RSampler> fTrainingSampler;
@@ -84,9 +86,6 @@ private:
    std::unique_ptr<std::thread> fLoadingThread;
    std::condition_variable fLoadingCondition;
    std::mutex fLoadingMutex;
-
-   std::size_t fTrainingChunkNum{0};
-   std::size_t fValidationChunkNum{0};
 
    bool fDropRemainder;
    bool fShuffle;
@@ -105,9 +104,6 @@ private:
    std::size_t fNumTrainingEntries;
    std::size_t fNumValidationEntries;
 
-   // TODO remove
-   std::size_t fNumTrainingChunks;
-   std::size_t fNumValidationChunks;
 
    // flattened buffers for chunks and temporary tensors (rows * cols)
    std::vector<RFlat2DMatrix> fTrainingDatasets;
@@ -118,10 +114,6 @@ private:
 
    RFlat2DMatrix fSampledTrainingDataset;
    RFlat2DMatrix fSampledValidationDataset;
-
-   RFlat2DMatrix fTrainChunkTensor;
-
-   RFlat2DMatrix fValidationChunkTensor;
 
 public:
    RBatchGenerator(const std::vector<ROOT::RDF::RNode> &rdfs,
@@ -175,20 +167,26 @@ public:
 
       } else {
          // scan cluster metadata
-         fChunkLoader = std::make_unique<RChunkLoader<Args...>>(fRdfs, fCols, fVecSizes, vecPadding, fValidationSplit, fShuffle, fSetSeed);
+         fClusterLoader = std::make_unique<RClusterLoader<Args...>>(fRdfs, fCols, fVecSizes, vecPadding, fValidationSplit, fShuffle, fSetSeed);
 
          // split cluster list into training and validation
-         fChunkLoader->SplitDataset();
+         fClusterLoader->SplitDataset();
 
-         // fChunkLoader->PrintClusterInfo("All clusters");
+         fClusterLoader->PrintClusterInfo("All clusters");
 
-         fNumTrainingEntries   = fChunkLoader->GetNumTrainingEntries();
-         fNumValidationEntries = fChunkLoader->GetNumValidationEntries();
+         fNumTrainingEntries   = fClusterLoader->GetNumTrainingEntries();
+         fNumValidationEntries = fClusterLoader->GetNumValidationEntries();
 
          // derive buffer quantities
          fBufferCapacity = fBatchSize * fBufferBatches;
          fLowWatermark   = fBufferCapacity / 2;
          fHighWatermark  = fBufferCapacity;
+
+         // std::cout << "Total training entries: " << fNumTrainingEntries << "\n"
+         //           << "Total validation entries: " << fNumValidationEntries << "\n"
+         //           << "Buffer capacity (entries): " << fBufferCapacity << "\n"
+         //           << "Low watermark (entries): " << fLowWatermark << "\n"
+         //           << "High watermark (entries): " << fHighWatermark << "\n";
       }
 
       // batch loaders
@@ -233,7 +231,7 @@ public:
          return;
       }
 
-      fLoadingThread = std::make_unique<std::thread>(&RBatchGenerator::LoadChunks, this);
+      fLoadingThread = std::make_unique<std::thread>(&RBatchGenerator::LoadData, this);
    }
 
    /// \brief Activate the training epoch by starting the batchloader.
@@ -242,7 +240,7 @@ public:
       {
          std::lock_guard<std::mutex> lock(fLoadingMutex);
          fTrainingEpochActive = true;
-         fTrainingChunkNum = 0;
+         fTrainingClusterIdx = 0;
       }
 
       fTrainingBatchLoader->Activate();
@@ -266,7 +264,7 @@ public:
       {
          std::lock_guard<std::mutex> lock(fLoadingMutex);
          fValidationEpochActive = true;
-         fValidationChunkNum = 0;
+         fValidationClusterIdx = 0;
       }
 
       fValidationBatchLoader->Activate();
@@ -288,21 +286,21 @@ public:
    /// \brief Main loop for loading chunks and creating batches.
    /// The producer (loading thread) will keep loading chunks and creating batches until the end of the epoch is
    /// reached, or the generator is deactivated.
-   void LoadChunks()
+   void LoadData()
    {
       // Set minimum number of batches to keep in the queue before producer goes to work.
       // This is to ensure that the producer will get a chance to work if the consumer is too fast and drains the queue
-      // quickly. With this, the maximum queue size will be approximately fChunkSize*1.5.
-      // TODO(staider): improve this heuristic by taking into consideration a "maximum number of batches in memory" set
-      // by the user.
-
+      // quickly.
       std::unique_lock<std::mutex> lock(fLoadingMutex);
+
+      const std::size_t numTrainingClusters = fClusterLoader->GetNumTrainingClusters();
+      const std::size_t numValidationClusters = fClusterLoader->GetNumValidationClusters();
 
       while (true) {
          // Wait until we have work or shutdown
          fLoadingCondition.wait(lock, [&] {
-            return !fIsActive || (fTrainingEpochActive && fTrainingChunkNum < fNumTrainingChunks) ||
-                   (fValidationEpochActive && fValidationChunkNum < fNumValidationChunks);
+            return !fIsActive || (fTrainingEpochActive && fTrainingClusterIdx < numTrainingClusters) ||
+                   (fValidationEpochActive && fValidationClusterIdx < numValidationClusters);
          });
 
          if (!fIsActive)
@@ -310,11 +308,11 @@ public:
 
          // Helper: check if validation queue below watermark and needs the producer
          auto validationEmpty = [&] {
-            if (!fValidationEpochActive || fValidationChunkNum >= fNumValidationChunks)
+            if (!fValidationEpochActive || fValidationClusterIdx >= numValidationClusters)
                return false;
             if (fValidationBatchLoader->isProducerDone())
                return false;
-            return fValidationBatchLoader->GetNumBatchQueue() < fLowWatermark;
+            return fValidationBatchLoader->GetNumBatchQueue() < fLowWatermark / fBatchSize;
          };
 
          // -- TRAINING --
@@ -325,7 +323,16 @@ public:
                   break;
 
                // No more chunks to load: signal consumers
-               if (fTrainingChunkNum >= fNumTrainingChunks) {
+               if (fTrainingClusterIdx >= numTrainingClusters) {
+                  // flush whatever remains in the buffer
+                  if (fTrainBuffer.GetRows() > 0) {
+                     lock.unlock();
+                     RFlat2DMatrix fShuffledTrainBuffer;
+                     fTensorOperators->ShuffleTensor(fShuffledTrainBuffer, fTrainBuffer);
+                     fTrainingBatchLoader->CreateBatches(fShuffledTrainBuffer, /*isLastBatch=*/true);
+                     fTrainBuffer = RFlat2DMatrix{};   // clear buffer
+                     lock.lock();
+                  }
                   fTrainingBatchLoader->MarkProducerDone();
                   break;
                }
@@ -339,24 +346,40 @@ public:
 
                // If queue is not empty, wait until it drains below watermark, or validation needs data, or we are
                // deactivated.
-               if (fTrainingBatchLoader->GetNumBatchQueue() >= fLowWatermark) {
+               if (fTrainingBatchLoader->GetNumBatchQueue() >= fLowWatermark / fBatchSize) {
                   fLoadingCondition.wait(lock, [&] {
                      return !fIsActive || !fTrainingEpochActive ||
-                            fTrainingBatchLoader->GetNumBatchQueue() < fLowWatermark || validationEmpty();
+                            fTrainingBatchLoader->GetNumBatchQueue() < fLowWatermark / fBatchSize || validationEmpty();
                   });
                   continue;
                }
 
-               // Claim chunk under lock
-               const std::size_t chunkIdx = fTrainingChunkNum++;
-               const bool isLastTrainChunk = (chunkIdx == fNumTrainingChunks - 1);
+               // Claim cluster under lock
+               const std::size_t clusterIdx = fTrainingClusterIdx++;
+               const bool isLastCluster = (clusterIdx == numTrainingClusters - 1);
 
                // Release lock while reading and loading data to allow the consumer to access the queue freely in
                // parallel. The loading thread re-acquires the lock in CreateBatches when it needs to push batches to
                // the queue.
                lock.unlock();
-               fChunkLoader->LoadTrainingChunk(fTrainChunkTensor, chunkIdx);
-               fTrainingBatchLoader->CreateBatches(fTrainChunkTensor, isLastTrainChunk);
+
+               // load whole cluster
+               RFlat2DMatrix clusterTensor;
+               fClusterLoader->LoadTrainingCluster(clusterTensor, clusterIdx);
+               
+               // append cluster rows to buffer
+               fTrainBuffer.Append(clusterTensor);
+
+               // std::cout << "Buffer now has " << fTrainBuffer.GetRows() << " rows and " << fTrainBuffer.GetCols() << " cols\n";
+   
+               // buffer full enough or last cluster: shuffle rows and push batches
+               if (fTrainBuffer.GetRows() >= fHighWatermark || isLastCluster) {
+                  RFlat2DMatrix fShuffledTrainBuffer;
+                  fTensorOperators->ShuffleTensor(fShuffledTrainBuffer, fTrainBuffer);
+                  fTrainingBatchLoader->CreateBatches(fShuffledTrainBuffer, isLastCluster);
+                  fTrainBuffer = RFlat2DMatrix{};   // clear buffer after batching
+               }
+   
                lock.lock();
             }
          }
@@ -369,35 +392,48 @@ public:
                   break;
 
                // No more chunks to load: signal consumers
-               if (fValidationChunkNum >= fNumValidationChunks) {
+               if (fValidationClusterIdx >= numValidationClusters) {
+                  if (fValidationBuffer.GetRows() > 0) {
+                     lock.unlock();
+                     fValidationBatchLoader->CreateBatches(fValidationBuffer, /*isLastBatch=*/true);
+                     fValidationBuffer = RFlat2DMatrix{};
+                     lock.lock();
+                  }
                   fValidationBatchLoader->MarkProducerDone();
                   break;
                }
 
                // If queue is not hungry, wait until it drains below watermark, or we are deactivated
-               if (fValidationBatchLoader->GetNumBatchQueue() >= fLowWatermark) {
+               if (fValidationBatchLoader->GetNumBatchQueue() >= fLowWatermark / fBatchSize) {
                   fLoadingCondition.wait(lock, [&] {
-                     return !fIsActive || !fValidationEpochActive ||
-                            fValidationBatchLoader->GetNumBatchQueue() < fLowWatermark;
+                     return !fIsActive || !fValidationEpochActive
+                         || fValidationBatchLoader->GetNumBatchQueue() < fLowWatermark / fBatchSize;
                   });
                   continue;
                }
 
                // Claim chunk under lock
-               const std::size_t chunkIdx = fValidationChunkNum++;
-               const bool isLastValidationChunk = (chunkIdx == fNumValidationChunks - 1);
+               const std::size_t clusterIdx = fValidationClusterIdx++;
+               const bool isLastCluster = (fValidationClusterIdx >= numValidationClusters);
 
-               // Release lock while working
                lock.unlock();
-               fChunkLoader->LoadValidationChunk(fValidationChunkTensor, chunkIdx);
-               fValidationBatchLoader->CreateBatches(fValidationChunkTensor, isLastValidationChunk);
+
+               RFlat2DMatrix clusterTensor;
+               fClusterLoader->LoadValidationCluster(clusterTensor, clusterIdx);
+               fValidationBuffer.Append(clusterTensor);
+
+               if (fValidationBuffer.GetRows() >= fHighWatermark || isLastCluster) {
+                  fValidationBatchLoader->CreateBatches(fValidationBuffer, isLastCluster);
+                  fValidationBuffer = RFlat2DMatrix{};
+               }
+
                lock.lock();
             }
          }
       }
    }
 
-   /// \brief Create training batches by first loading a chunk (see RChunkLoader) and split it into batches (see
+   /// \brief Create training batches by first loading a chunk (see RClusterLoader) and split it into batches (see
    /// RBatchLoader)
    void CreateTrainBatches()
    {
@@ -414,12 +450,13 @@ public:
 
          fTrainingBatchLoader->CreateBatches(fSampledTrainingDataset, true);
          fTrainingBatchLoader->MarkProducerDone();
+
       } else {
-         fChunkLoader->CreateTrainingChunksIntervals();
+         fClusterLoader->ShuffleTrainingClusters();
       }
    }
 
-   /// \brief Creates validation batches by first loading a chunk (see RChunkLoader), and then split it into batches
+   /// \brief Creates validation batches by first loading a chunk (see RClusterLoader), and then split it into batches
    /// (see RBatchLoader)
    void CreateValidationBatches()
    {
@@ -439,7 +476,7 @@ public:
       }
 
       else {
-         fChunkLoader->CreateValidationChunksIntervals();
+         fClusterLoader->ShuffleValidationClusters();
       }
    }
 

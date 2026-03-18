@@ -138,6 +138,7 @@ RFlat2DMatrix RBatchLoader::GetBatch()
 /// \param[in] isLastBatch Check if the batch in the chunk is the last one
 void RBatchLoader::CreateBatches(RFlat2DMatrix &chunkTensor, bool isLastBatch)
 {
+   // std::cout << "RBatchLoader: Creating batches from chunk with shape (" << chunkTensor.GetRows() << ", " << chunkTensor.GetCols() << ")\n";
    std::size_t chunkSize = chunkTensor.GetRows();
    std::size_t numCols = chunkTensor.GetCols();
    std::size_t numBatches = chunkSize / fBatchSize;
@@ -223,6 +224,7 @@ void RBatchLoader::CreateBatches(RFlat2DMatrix &chunkTensor, bool isLastBatch)
          fBatchQueue.push(std::move(batch));
       }
    }
+   // std::cout << "RBatchLoader: Created " << batches.size() << " batches from chunk. Queue size is now " << fBatchQueue.size() << ".\n";
 
    fCV.notify_all();
 }

@@ -3,6 +3,7 @@
 
 #include <cassert>
 #include <utility>
+#include <iostream>
 
 #include "ROOT/RVec.hxx"
 
@@ -45,6 +46,27 @@ struct RFlat2DMatrix {
       assert(rows * cols == fRVec.size());
       fRows = rows;
       fCols = cols;
+   }
+
+   /// \brief Append all rows from another matrix to this one.
+   /// Both matrices must have the same number of columns.
+   void Append(const RFlat2DMatrix &other)
+   {
+      if (other.GetRows() == 0) return;
+
+      // if buffer is empty, inherit column count from the first cluster
+      if (fRows == 0 && fCols == 0) {
+         fCols = other.GetCols();
+      }
+
+      assert(fCols == other.GetCols() && "Append: column count mismatch");
+
+      const std::size_t oldRows = fRows;
+      const std::size_t newRows = oldRows + other.GetRows();
+      Resize(newRows, fCols);
+      std::copy(other.GetData(),
+               other.GetData() + other.GetRows() * other.GetCols(),
+               GetData() + oldRows * fCols);
    }
 
    float &operator[](std::size_t i) { return fRVec[i]; }

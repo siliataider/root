@@ -6,7 +6,7 @@ ROOT_STANDARD_LIBRARY_PACKAGE(ROOTMLDataLoader
   HEADERS
     ROOT/ML/RBatchGenerator.hxx
     ROOT/ML/RBatchLoader.hxx
-    ROOT/ML/RChunkLoader.hxx
+    ROOT/ML/RClusterLoader.hxx
     ROOT/ML/RChunkConstructor.hxx
     ROOT/ML/RFlat2DMatrix.hxx
     ROOT/ML/RFlat2DMatrixOperators.hxx
