@@ -364,11 +364,15 @@ public:
                lock.unlock();
 
                // load whole cluster
-               RFlat2DMatrix clusterTensor;
-               fClusterLoader->LoadTrainingCluster(clusterTensor, clusterIdx);
+               // RFlat2DMatrix clusterTensor;
+               // fClusterLoader->LoadTrainingCluster(clusterTensor, clusterIdx);
                
-               // append cluster rows to buffer
-               fTrainBuffer.Append(clusterTensor);
+               // // append cluster rows to buffer
+               // fTrainBuffer.Append(clusterTensor);
+
+               const std::size_t clusterSize = fClusterLoader->GetTrainingClusterSize(clusterIdx);
+               const std::size_t startRow    = fTrainBuffer.ExtendRows(clusterSize, fClusterLoader->GetNumChunkCols());
+               fClusterLoader->LoadTrainingClusterInto(fTrainBuffer, clusterIdx, startRow);
 
                // std::cout << "Buffer now has " << fTrainBuffer.GetRows() << " rows and " << fTrainBuffer.GetCols() << " cols\n";
    

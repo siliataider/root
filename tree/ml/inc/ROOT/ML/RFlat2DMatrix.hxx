@@ -69,6 +69,16 @@ struct RFlat2DMatrix {
                GetData() + oldRows * fCols);
    }
 
+   std::size_t ExtendRows(std::size_t extraRows, std::size_t cols)
+   {
+      if (fRows == 0 && fCols == 0)
+         fCols = cols;
+      assert(fCols == cols && "ExtendRows: column count mismatch");
+      const std::size_t startRow = fRows;
+      Resize(fRows + extraRows, fCols);
+      return startRow; // caller writes starting here
+   }
+
    float &operator[](std::size_t i) { return fRVec[i]; }
 
    const float &operator[](std::size_t i) const { return fRVec[i]; }

@@ -300,15 +300,38 @@ RClusterLoader(std::vector<ROOT::RDF::RNode> &rdfs,
       LoadCluster(tensor, fValidationClusters, idx);
    }
 
+   void LoadClusterInto(RFlat2DMatrix &dest, const std::vector<RClusterRange> &clusters,
+      std::size_t idx, std::size_t startRow)
+   {
+      const RClusterRange &c = clusters[idx];
+      ROOT::RDF::RNode &rdf = fRdfs[c.rdfIdx];
+      ROOT::Internal::RDF::ChangeBeginAndEndEntries(rdf, c.start, c.end);
+      RChunkLoaderFunctor<Args...> func(dest, fNumChunkCols, fVecSizes, fVecPadding, startRow);
+      rdf.Foreach(func, fCols);
+      ROOT::Internal::RDF::ChangeBeginAndEndEntries(rdf, 0, fTotalEntries);
+   }
+
+   void LoadTrainingClusterInto(RFlat2DMatrix &dest, std::size_t idx, std::size_t startRow)
+   {
+      LoadClusterInto(dest, fTrainingClusters, idx, startRow);
+   }
+
    //////////////////////////////////////////////////////////////////////////
    // Accessors
    std::size_t GetNumTrainingEntries()   const { return fNumTrainingEntries; }
    std::size_t GetNumValidationEntries() const { return fNumValidationEntries; }
    std::size_t GetNumTrainingClusters()  const { return fTrainingClusters.size(); }
    std::size_t GetNumValidationClusters() const { return fValidationClusters.size(); }
+   std::size_t GetNumChunkCols() const { return fNumChunkCols; }
 
    const std::vector<RClusterRange> &GetTrainingClusters()   const { return fTrainingClusters; }
    const std::vector<RClusterRange> &GetValidationClusters() const { return fValidationClusters; }
+
+   std::size_t GetTrainingClusterSize(std::size_t idx) const
+   {
+      const RClusterRange &c = fTrainingClusters[idx];
+      return static_cast<std::size_t>(c.end - c.start);
+   }
 
 
    // DBG
