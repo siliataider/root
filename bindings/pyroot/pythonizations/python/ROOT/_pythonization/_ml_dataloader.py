@@ -684,6 +684,7 @@ class ValidationDataLoader:
 def CreateNumPyGenerators(
     rdataframes: ROOT.RDF.RNode | list[ROOT.RDF.RNode] | None = None,
     batch_size: int = 0,
+    buffer_batches: int = 1,
     chunk_size: int = 0,
     block_size: int = 0,
     columns: list[str] | None = None,
@@ -792,6 +793,7 @@ def CreateNumPyGenerators(
     base_generator = BaseGenerator(
         rdataframes,
         batch_size,
+        buffer_batches,
         chunk_size,
         block_size,
         columns,
@@ -823,6 +825,7 @@ def CreateNumPyGenerators(
 def CreateTFDatasets(
     rdataframes: ROOT.RDF.RNode | list[ROOT.RDF.RNode] | None = None,
     batch_size: int = 0,
+    buffer_batches: int = 1,
     chunk_size: int = 0,
     block_size: int = 0,
     columns: list[str] | None = None,
@@ -933,6 +936,7 @@ def CreateTFDatasets(
     base_generator = BaseGenerator(
         rdataframes,
         batch_size,
+        buffer_batches,
         chunk_size,
         block_size,
         columns,

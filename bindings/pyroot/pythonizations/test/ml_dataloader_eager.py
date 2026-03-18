@@ -6,7 +6,7 @@ import numpy as np
 import ROOT
 
 
-class DataLoaderMultipleFiles(unittest.TestCase):
+class DataLoaderEagerLoading(unittest.TestCase):
     file_name1 = "first_half.root"
     file_name2 = "second_half.root"
     file_name3 = "vector_columns.root"
@@ -52,16 +52,14 @@ class DataLoaderMultipleFiles(unittest.TestCase):
         try:
             df = ROOT.RDataFrame(self.tree_name, self.file_name1)
 
-            entries_before = df.AsNumpy(["rdfentry_"])["rdfentry_"]
-
             gen_train, gen_validation = ROOT.Experimental.ML.RDataLoader(
                 df,
                 batch_size=3,
-                buffer_batches=2,
                 target="b2",
                 validation_split=0.4,
                 shuffle=False,
                 drop_remainder=False,
+                load_eager=True,
                 backend="numpy",
             )
 
@@ -108,11 +106,6 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             self.assertEqual(results_y_train, flat_y_train)
             self.assertEqual(results_y_val, flat_y_val)
 
-            entries_after = df.AsNumpy(["rdfentry_"])["rdfentry_"]
-
-            # check if the dataframe is correctly reset
-            self.assertTrue(np.array_equal(entries_before, entries_after))
-
             self.teardown_file(self.file_name1)
 
         except:
@@ -126,14 +119,7 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             df = ROOT.RDataFrame(self.tree_name, self.file_name1)
 
             gen_train, gen_validation = ROOT.Experimental.ML.RDataLoader(
-                df,
-                batch_size=3,
-                buffer_batches=2,
-                target="b2",
-                validation_split=0.4,
-                shuffle=True,
-                drop_remainder=False,
-                backend="numpy",
+                df, batch_size=3, target="b2", validation_split=0.4, shuffle=True, drop_remainder=False, load_eager=True, backend="numpy",
             )
 
             collected_x_train = []
@@ -187,14 +173,7 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             df = ROOT.RDataFrame(self.tree_name, self.file_name1)
 
             gen_train, gen_validation = ROOT.Experimental.ML.RDataLoader(
-                df,
-                batch_size=3,
-                buffer_batches=2,
-                target="b2",
-                validation_split=0.4,
-                shuffle=False,
-                drop_remainder=True,
-                backend="numpy",
+                df, batch_size=3, target="b2", validation_split=0.4, shuffle=False, drop_remainder=True, load_eager=True, backend="numpy",
             )
 
             collected_x = []
@@ -231,11 +210,11 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             gen_train, gen_validation = ROOT.Experimental.ML.RDataLoader(
                 df,
                 batch_size=3,
-                buffer_batches=2,
                 target="b2",
                 validation_split=0.4,
                 shuffle=False,
                 drop_remainder=False,
+                load_eager=True,
                 backend="numpy",
             )
 
@@ -291,13 +270,13 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             gen_train, gen_validation = ROOT.Experimental.ML.RDataLoader(
                 df,
                 batch_size=3,
-                buffer_batches=2,
                 target=["b2", "b4"],
                 weights="b3",
                 validation_split=0.4,
                 shuffle=False,
                 drop_remainder=False,
-                backend="numpy"
+                load_eager=True,
+                backend="numpy",
             )
 
             results_x_train = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
@@ -376,11 +355,11 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             gen_train, gen_validation = ROOT.Experimental.ML.RDataLoader(
                 df,
                 batch_size=3,
-                buffer_batches=2,
                 target="b2",
                 validation_split=0.4,
                 shuffle=False,
                 drop_remainder=False,
+                load_eager=True,
                 backend="numpy",
             )
 
@@ -441,16 +420,14 @@ class DataLoaderMultipleFiles(unittest.TestCase):
 
             dff = df.Filter("b1 % 2 == 0", "name")
 
-            filter_entries_before = dff.AsNumpy(["rdfentry_"])["rdfentry_"]
-
             gen_train, gen_validation = ROOT.Experimental.ML.RDataLoader(
                 dff,
                 batch_size=3,
-                buffer_batches=2,
                 target="b2",
                 validation_split=0.4,
                 shuffle=False,
                 drop_remainder=False,
+                load_eager=True,
                 backend="numpy",
             )
 
@@ -489,11 +466,6 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             self.assertEqual(results_y_train, flat_y_train)
             self.assertEqual(results_y_val, flat_y_val)
 
-            filter_entries_after = dff.AsNumpy(["rdfentry_"])["rdfentry_"]
-
-            # check if the dataframe is correctly reset
-            self.assertTrue(np.array_equal(filter_entries_before, filter_entries_after))
-
             self.teardown_file(self.file_name1)
 
         except:
@@ -514,14 +486,7 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             dff = df.Filter("b1 % 2 == 0", "name")
 
             gen_train = ROOT.Experimental.ML.RDataLoader(
-                dff,
-                batch_size=3,
-                buffer_batches=2,
-                target="b2",
-                validation_split=0,
-                shuffle=False,
-                drop_remainder=False,
-                backend="numpy",
+                dff, batch_size=3, target="b2", validation_split=0, shuffle=False, drop_remainder=False, load_eager=True, backend="numpy",
             )
 
             results_x_train = [0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0, 16.0, 18.0]
@@ -566,11 +531,11 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             gen_train, gen_validation = ROOT.Experimental.ML.RDataLoader(
                 df,
                 batch_size=3,
-                buffer_batches=2,
                 target="b2",
                 validation_split=0.4,
                 shuffle=False,
                 drop_remainder=False,
+                load_eager=True,
                 backend="numpy",
             )
 
@@ -633,11 +598,11 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             gen_train, gen_validation = ROOT.Experimental.ML.RDataLoader(
                 df,
                 batch_size=3,
-                buffer_batches=2,
                 target="b2",
                 validation_split=0.4,
                 shuffle=False,
                 drop_remainder=False,
+                load_eager=True,
                 backend="numpy",
             )
 
@@ -674,12 +639,12 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             gen_train, gen_validation = ROOT.Experimental.ML.RDataLoader(
                 df,
                 batch_size=3,
-                buffer_batches=2,
                 target=["b2", "b4"],
                 weights="b3",
                 validation_split=0.4,
                 shuffle=False,
                 drop_remainder=False,
+                load_eager=True,
                 backend="torch",
             )
 
@@ -759,12 +724,12 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             gen_train, gen_validation = ROOT.Experimental.ML.RDataLoader(
                 df,
                 batch_size=3,
-                buffer_batches=2,
                 target=["b2", "b4"],
                 weights="b3",
                 validation_split=0.4,
                 shuffle=False,
                 drop_remainder=False,
+                load_eager=True,
                 backend="tensorflow",
             )
 
@@ -867,6 +832,7 @@ class DataLoaderMultipleFiles(unittest.TestCase):
                     validation_split=0.3,
                     shuffle=False,
                     drop_remainder=False,
+                    load_eager=True,
                     backend="numpy",
                 )
 
@@ -949,13 +915,13 @@ class DataLoaderMultipleFiles(unittest.TestCase):
                 gen_train, gen_validation = ROOT.Experimental.ML.RDataLoader(
                     df,
                     batch_size=3,
-                    buffer_batches=2,
                     target="b2",
                     validation_split=0.4,
                     shuffle=True,
                     drop_remainder=False,
                     set_seed=42,
-                    backend="numpy"
+                    load_eager=True,
+                    backend="numpy",
                 )
 
                 collected_x_train = []
@@ -1013,12 +979,12 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             gen_train, gen_validation = ROOT.Experimental.ML.RDataLoader(
                 df,
                 batch_size=3,
-                buffer_batches=2,
                 target="b1",
                 validation_split=0.4,
                 max_vec_sizes=max_vec_sizes,
                 shuffle=False,
                 drop_remainder=False,
+                load_eager=True,
                 backend="numpy",
             )
 
@@ -1122,7 +1088,6 @@ class DataLoaderMultipleFiles(unittest.TestCase):
         except:
             self.teardown_file(self.file_name3)
             raise
-
 
 if __name__ == "__main__":
     unittest.main()
