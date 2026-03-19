@@ -137,6 +137,9 @@ private:
    std::vector<RClusterRange> fTrainingClusters;
    std::vector<RClusterRange> fValidationClusters;
 
+   std::vector<std::pair<std::size_t, std::size_t>> fTrainingClusterRanges;
+   std::vector<std::pair<std::size_t, std::size_t>> fValidationClusterRanges;
+
    std::size_t fTotalEntries{0};
    std::size_t fNumTrainingEntries{0};
    std::size_t fNumValidationEntries{0};
@@ -176,7 +179,7 @@ RClusterLoader(std::vector<ROOT::RDF::RNode> &rdfs,
 
    //////////////////////////////////////////////////////////////////////////
    /// \brief Distribute the clusters into training and validation datasets
-   void SplitDataset()
+   void SplitDataset(std::size_t maxSize = 0)
    {
       if (fAllClusters.empty())
          throw std::runtime_error("RClusterLoader::SplitDataset: no clusters found.");
@@ -234,105 +237,133 @@ RClusterLoader(std::vector<ROOT::RDF::RNode> &rdfs,
          throw std::runtime_error(
             "RClusterLoader::SplitDataset: no entries for validation after split. "
             "Increase validation_split.");
-   
+            
+      SortAndMergeClusters(fTrainingClusters, maxSize);
+      SortAndMergeClusters(fValidationClusters, maxSize);
+
       for (const auto &c : fTrainingClusters)  fNumTrainingEntries  += c.numEntries();
       for (const auto &c : fValidationClusters) fNumValidationEntries += c.numEntries();
    }
 
-   //////////////////////////////////////////////////////////////////////////
-   /// \brief Shuffle the training cluster order for the upcoming epoch.
-   ///
-   /// This is a pure index-level operation — no I/O. Called once per epoch
-   /// by the loading thread before it starts consuming clusters.
-   void ShuffleTrainingClusters()
+   // sort the cluster indices after shuffling and splitting, to allow contiguous reads when possible
+   void SortAndMergeClusters(std::vector<RClusterRange> &clusters, std::size_t maxSize)
    {
-      if (!fShuffle) return;
-      std::mt19937 g(fSetSeed == 0 ? std::random_device{}() : fSetSeed);
-      std::shuffle(fTrainingClusters.begin(), fTrainingClusters.end(), g);
+      if (clusters.empty())
+         return;
+
+      // Sort by file position so adjacent clusters can be merged
+      std::sort(clusters.begin(), clusters.end(), [](const RClusterRange &a, const RClusterRange &b) {
+         return a.rdfIdx < b.rdfIdx || (a.rdfIdx == b.rdfIdx && a.start < b.start);
+      });
+
+      // Merge clusters that are contiguous in the same file
+      std::vector<RClusterRange> merged;
+      merged.push_back(clusters[0]);
+      for (std::size_t i = 1; i < clusters.size(); ++i) {
+         const auto &cur  = clusters[i];
+         auto &back = merged.back();
+         const bool contiguous = (cur.rdfIdx == back.rdfIdx && cur.start == back.end);
+         const bool withinLimit = (maxSize == 0 || back.numEntries() + cur.numEntries() <= maxSize);
+         if (contiguous && withinLimit) {
+            back.end = cur.end; // extend
+         } else {
+            merged.push_back(cur);
+         }
+      }
+      clusters = std::move(merged);
+   }
+
+   //////////////////////////////////////////////////////////////////////////
+   /// \brief store [start, end) pairs for each buffer fill, shuffled
+   void ShuffleTrainingClusters(std::size_t highWatermark)
+   {
+      fTrainingClusterRanges.clear();
+   
+      std::size_t pos = 0;
+      while (pos < fTrainingClusters.size()) {
+         std::size_t fillStart    = pos;
+         std::size_t accumulatedBufferSize  = 0;
+         while (pos < fTrainingClusters.size() &&  (accumulatedBufferSize == 0 || accumulatedBufferSize + fTrainingClusters[pos].numEntries() <= highWatermark)) {
+            accumulatedBufferSize += fTrainingClusters[pos].numEntries();
+            ++pos;
+         }
+         fTrainingClusterRanges.emplace_back(fillStart, pos);
+      }
+   
+      if (fShuffle) {
+         std::mt19937 g(fSetSeed == 0 ? std::random_device{}() : fSetSeed);
+         std::shuffle(fTrainingClusterRanges.begin(), fTrainingClusterRanges.end(), g);
+      }
+
+      // printfTrainingClusterRanges for debugging
+      std::cout << "Training cluster ranges (size: " << fTrainingClusterRanges.size() << "):\n";
+      for (const auto &range : fTrainingClusterRanges) {
+         std::size_t startIdx = range.first;
+         std::size_t endIdx = range.second;
+         std::size_t rangeSize = 0;
+         for (std::size_t i = startIdx; i < endIdx; ++i) {
+            rangeSize += fTrainingClusters[i].numEntries();
+         }
+         std::cout << "  [" << startIdx << ", " << endIdx << ")  entries: " << rangeSize << "\n";
+      }
    }
 
    //////////////////////////////////////////////////////////////////////////
    /// \brief Shuffle the validation cluster order for the upcoming epoch.
-   void ShuffleValidationClusters()
+   void ShuffleValidationClusters(std::size_t highWatermark)
    {
-      if (!fShuffle) return;
-      std::mt19937 g(fSetSeed == 0 ? std::random_device{}() : fSetSeed);
-      std::shuffle(fValidationClusters.begin(), fValidationClusters.end(), g);
+      fValidationClusterRanges.clear();
+   
+      std::size_t pos = 0;
+      while (pos < fValidationClusters.size()) {
+         std::size_t fillStart    = pos;
+         std::size_t accumulatedBufferSize  = 0;
+         while (pos < fValidationClusters.size() && accumulatedBufferSize < highWatermark) {
+            accumulatedBufferSize += fValidationClusters[pos].numEntries();
+            ++pos;
+         }
+         fValidationClusterRanges.emplace_back(fillStart, pos);
+      }
+   
+      if (fShuffle) {
+         std::mt19937 g(fSetSeed == 0 ? std::random_device{}() : fSetSeed);
+         std::shuffle(fValidationClusterRanges.begin(), fValidationClusterRanges.end(), g);
+      }
    }
 
-   //////////////////////////////////////////////////////////////////////////
-   /// \brief Load one whole cluster into a flat matrix.
-   ///
-   /// Always reads an entire cluster — never splits across cluster boundaries.
-   /// The output tensor is replaced (not appended to) by the cluster's rows.
-   ///
-   /// \param[out] tensor   Destination matrix, resized to (clusterSize, numCols).
-   /// \param[in]  clusters Which cluster list to draw from (training or validation).
-   /// \param[in]  idx      Index into that cluster list.
-   void LoadCluster(RFlat2DMatrix &tensor, const std::vector<RClusterRange> &clusters, std::size_t idx)
+   void LoadClusterInto(RFlat2DMatrix &dest, std::size_t rdfIdx, const ULong64_t &startRow, const ULong64_t &endRow)
    {
-      // std::cout << "RClusterLoader: Loading cluster " << idx + 1 << " / " << clusters.size() << "\n";
-      const RClusterRange &c = clusters[idx];
-      const std::size_t clusterSize = static_cast<std::size_t>(c.end - c.start);
-
-      RFlat2DMatrix tmp(clusterSize, fNumChunkCols);
-
-      ROOT::RDF::RNode &rdf = fRdfs[c.rdfIdx];
-      ROOT::Internal::RDF::ChangeBeginAndEndEntries(rdf, c.start, c.end);
-
-      RChunkLoaderFunctor<Args...> func(tmp, fNumChunkCols, fVecSizes, fVecPadding, /*startRow=*/0);
-      rdf.Foreach(func, fCols);
-
-      // reset the dataframe range after loading
-      ROOT::Internal::RDF::ChangeBeginAndEndEntries(rdf, 0, fTotalEntries);
-
-      tensor = std::move(tmp);
-   }
-
-   // convenience wrappers used by the loading thread
-   void LoadTrainingCluster(RFlat2DMatrix &tensor, std::size_t idx)
-   {
-      LoadCluster(tensor, fTrainingClusters, idx);
-   }
-
-   void LoadValidationCluster(RFlat2DMatrix &tensor, std::size_t idx)
-   {
-      LoadCluster(tensor, fValidationClusters, idx);
-   }
-
-   void LoadClusterInto(RFlat2DMatrix &dest, const std::vector<RClusterRange> &clusters,
-      std::size_t idx, std::size_t startRow)
-   {
-      const RClusterRange &c = clusters[idx];
-      ROOT::RDF::RNode &rdf = fRdfs[c.rdfIdx];
-      ROOT::Internal::RDF::ChangeBeginAndEndEntries(rdf, c.start, c.end);
-      RChunkLoaderFunctor<Args...> func(dest, fNumChunkCols, fVecSizes, fVecPadding, startRow);
+      ROOT::RDF::RNode &rdf = fRdfs[rdfIdx];
+      ROOT::Internal::RDF::ChangeBeginAndEndEntries(rdf, startRow, endRow);
+      RChunkLoaderFunctor<Args...> func(dest, fNumChunkCols, fVecSizes, fVecPadding, 0);
       rdf.Foreach(func, fCols);
       ROOT::Internal::RDF::ChangeBeginAndEndEntries(rdf, 0, fTotalEntries);
    }
 
-   void LoadTrainingClusterInto(RFlat2DMatrix &dest, std::size_t idx, std::size_t startRow)
+   void LoadTrainingClusterInto(RFlat2DMatrix &dest, std::size_t rdfIdx, ULong64_t startRow, ULong64_t endRow)
    {
-      LoadClusterInto(dest, fTrainingClusters, idx, startRow);
+      LoadClusterInto(dest, rdfIdx, startRow, endRow);
+   }
+
+   void LoadValidationClusterInto(RFlat2DMatrix &dest, std::size_t rdfIdx, ULong64_t startRow, ULong64_t endRow)
+   {
+      LoadClusterInto(dest, rdfIdx, startRow, endRow);
    }
 
    //////////////////////////////////////////////////////////////////////////
    // Accessors
    std::size_t GetNumTrainingEntries()   const { return fNumTrainingEntries; }
    std::size_t GetNumValidationEntries() const { return fNumValidationEntries; }
-   std::size_t GetNumTrainingClusters()  const { return fTrainingClusters.size(); }
-   std::size_t GetNumValidationClusters() const { return fValidationClusters.size(); }
    std::size_t GetNumChunkCols() const { return fNumChunkCols; }
 
-   const std::vector<RClusterRange> &GetTrainingClusters()   const { return fTrainingClusters; }
-   const std::vector<RClusterRange> &GetValidationClusters() const { return fValidationClusters; }
+   const std::vector<RClusterRange>& GetTrainingClusters() const { return fTrainingClusters; }
+   const std::vector<RClusterRange>& GetValidationClusters() const { return fValidationClusters; }
+   
+   const std::vector<std::pair<std::size_t, std::size_t>>& GetTrainingClusterRanges() const { return fTrainingClusterRanges; }
+   const std::vector<std::pair<std::size_t, std::size_t>>& GetValidationClusterRanges() const { return fValidationClusterRanges; }
 
-   std::size_t GetTrainingClusterSize(std::size_t idx) const
-   {
-      const RClusterRange &c = fTrainingClusters[idx];
-      return static_cast<std::size_t>(c.end - c.start);
-   }
-
+   const std::size_t GetNumTrainingClusterRanges() const { return fTrainingClusterRanges.size(); }
+   const std::size_t GetNumValidationClusterRanges() const { return fValidationClusterRanges.size(); }
 
    // DBG
    void PrintClusterInfo(const std::string &label = "") const
