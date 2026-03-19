@@ -177,7 +177,7 @@ public:
          // split cluster list into training and validation
          fClusterLoader->SplitDataset(fHighWatermark);
 
-         fClusterLoader->PrintClusterInfo("All clusters");
+         // fClusterLoader->PrintClusterInfo("All clusters");
 
          fNumTrainingEntries   = fClusterLoader->GetNumTrainingEntries();
          fNumValidationEntries = fClusterLoader->GetNumValidationEntries();

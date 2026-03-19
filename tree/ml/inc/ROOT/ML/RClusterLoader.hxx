@@ -296,16 +296,16 @@ RClusterLoader(std::vector<ROOT::RDF::RNode> &rdfs,
       }
 
       // printfTrainingClusterRanges for debugging
-      std::cout << "Training cluster ranges (size: " << fTrainingClusterRanges.size() << "):\n";
-      for (const auto &range : fTrainingClusterRanges) {
-         std::size_t startIdx = range.first;
-         std::size_t endIdx = range.second;
-         std::size_t rangeSize = 0;
-         for (std::size_t i = startIdx; i < endIdx; ++i) {
-            rangeSize += fTrainingClusters[i].numEntries();
-         }
-         std::cout << "  [" << startIdx << ", " << endIdx << ")  entries: " << rangeSize << "\n";
-      }
+      // std::cout << "Training cluster ranges (size: " << fTrainingClusterRanges.size() << "):\n";
+      // for (const auto &range : fTrainingClusterRanges) {
+      //    std::size_t startIdx = range.first;
+      //    std::size_t endIdx = range.second;
+      //    std::size_t rangeSize = 0;
+      //    for (std::size_t i = startIdx; i < endIdx; ++i) {
+      //       rangeSize += fTrainingClusters[i].numEntries();
+      //    }
+      //    std::cout << "  [" << startIdx << ", " << endIdx << ")  entries: " << rangeSize << "\n";
+      // }
    }
 
    //////////////////////////////////////////////////////////////////////////
