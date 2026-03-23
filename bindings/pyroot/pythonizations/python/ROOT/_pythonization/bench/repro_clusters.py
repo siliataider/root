@@ -29,15 +29,15 @@ start = time.time()
 
 # == CONFIG 1: block_size << cluster_size
 
-x_gen, y_gen = ROOT.Experimental.ML.RDataLoader(
-                df,
-                batch_size=500,
-                buffer_batches=20,
-                backend="torch",
-                validation_split=0.1,
-                columns=columns,
-                shuffle=True,
-            )
+# x_gen, y_gen = ROOT.Experimental.ML.RDataLoader(
+#                 df,
+#                 batch_size=500,
+#                 buffer_batches=20,
+#                 backend="torch",
+#                 validation_split=0.1,
+#                 columns=columns,
+#                 shuffle=True,
+#             )
 
 # x_gen, y_gen = ROOT.Experimental.ML.CreatePyTorchGenerators(
 #                 df,
@@ -75,15 +75,15 @@ x_gen, y_gen = ROOT.Experimental.ML.RDataLoader(
 
 # == CONFIG 3: block_size >> cluster_size
 
-# x_gen, y_gen = ROOT.Experimental.ML.RDataLoader(
-#                 df,
-#                 batch_size=1000,
-#                 buffer_batches=100,
-#                 backend="torch",
-#                 validation_split=0.1,
-#                 columns=columns,
-#                 shuffle=True,
-#             )
+x_gen, y_gen = ROOT.Experimental.ML.RDataLoader(
+                df,
+                batch_size=1000,
+                buffer_batches=100,
+                backend="torch",
+                validation_split=0.1,
+                columns=columns,
+                shuffle=True,
+            )
 
 # x_gen, y_gen = ROOT.Experimental.ML.CreatePyTorchGenerators(
 #                 df,

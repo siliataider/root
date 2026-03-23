@@ -4,7 +4,7 @@ endif()
 
 ROOT_STANDARD_LIBRARY_PACKAGE(ROOTMLDataLoader
   HEADERS
-    ROOT/ML/RBatchGenerator.hxx
+    ROOT/ML/RDataLoader.hxx
     ROOT/ML/RBatchLoader.hxx
     ROOT/ML/RClusterLoader.hxx
     ROOT/ML/RChunkConstructor.hxx

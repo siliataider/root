@@ -57,12 +57,11 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             gen_train, gen_validation = ROOT.Experimental.ML.RDataLoader(
                 df,
                 batch_size=3,
-                buffer_batches=2,
+                approx_batches_in_memory=2,
                 target="b2",
                 validation_split=0.4,
                 shuffle=False,
                 drop_remainder=False,
-                backend="numpy",
             )
 
             results_x_train = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
@@ -75,8 +74,8 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             collected_y_train = []
             collected_y_val = []
 
-            train_iter = iter(gen_train)
-            val_iter = iter(gen_validation)
+            train_iter = iter(gen_train.AsNumpy())
+            val_iter = iter(gen_validation.AsNumpy())
 
             for _ in range(self.n_val_batch):
                 x, y = next(val_iter)
@@ -128,12 +127,11 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             gen_train, gen_validation = ROOT.Experimental.ML.RDataLoader(
                 df,
                 batch_size=3,
-                buffer_batches=2,
+                approx_batches_in_memory=2,
                 target="b2",
                 validation_split=0.4,
                 shuffle=True,
                 drop_remainder=False,
-                backend="numpy",
             )
 
             collected_x_train = []
@@ -141,8 +139,8 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             collected_y_train = []
             collected_y_val = []
 
-            train_iter = iter(gen_train)
-            val_iter = iter(gen_validation)
+            train_iter = iter(gen_train.AsNumpy())
+            val_iter = iter(gen_validation.AsNumpy())
 
             for _ in range(self.n_train_batch):
                 x, y = next(train_iter)
@@ -189,24 +187,23 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             gen_train, gen_validation = ROOT.Experimental.ML.RDataLoader(
                 df,
                 batch_size=3,
-                buffer_batches=2,
+                approx_batches_in_memory=2,
                 target="b2",
                 validation_split=0.4,
                 shuffle=False,
                 drop_remainder=True,
-                backend="numpy",
             )
 
             collected_x = []
             collected_y = []
 
-            for x, y in gen_train:
+            for x, y in gen_train.AsNumpy():
                 self.assertTrue(x.shape == (3, 1))
                 self.assertTrue(y.shape == (3, 1))
                 collected_x.append(x)
                 collected_y.append(y)
 
-            for x, y in gen_validation:
+            for x, y in gen_validation.AsNumpy():
                 self.assertTrue(x.shape == (3, 1))
                 self.assertTrue(y.shape == (3, 1))
                 collected_x.append(x)
@@ -231,12 +228,11 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             gen_train, gen_validation = ROOT.Experimental.ML.RDataLoader(
                 df,
                 batch_size=3,
-                buffer_batches=2,
+                approx_batches_in_memory=2,
                 target="b2",
                 validation_split=0.4,
                 shuffle=False,
                 drop_remainder=False,
-                backend="numpy",
             )
 
             results_x_train = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
@@ -249,13 +245,13 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             collected_y_train = []
             collected_y_val = []
 
-            for x, y in gen_train:
+            for x, y in gen_train.AsNumpy():
                 self.assertTrue(x.shape == (3, 1))
                 self.assertTrue(y.shape == (3, 1))
                 collected_x_train.append(x.tolist())
                 collected_y_train.append(y.tolist())
 
-            for x, y in gen_validation:
+            for x, y in gen_validation.AsNumpy():
                 self.assertTrue(x.shape == (3, 1))
                 self.assertTrue(y.shape == (3, 1))
                 collected_x_val.append(x.tolist())
@@ -291,13 +287,12 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             gen_train, gen_validation = ROOT.Experimental.ML.RDataLoader(
                 df,
                 batch_size=3,
-                buffer_batches=2,
+                approx_batches_in_memory=2,
                 target=["b2", "b4"],
                 weights="b3",
                 validation_split=0.4,
                 shuffle=False,
                 drop_remainder=False,
-                backend="numpy"
             )
 
             results_x_train = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
@@ -314,8 +309,8 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             collected_z_train = []
             collected_z_val = []
 
-            iter_train = iter(gen_train)
-            iter_val = iter(gen_validation)
+            iter_train = iter(gen_train.AsNumpy())
+            iter_val = iter(gen_validation.AsNumpy())
 
             for _ in range(self.n_train_batch):
                 x, y, z = next(iter_train)
@@ -376,12 +371,11 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             gen_train, gen_validation = ROOT.Experimental.ML.RDataLoader(
                 df,
                 batch_size=3,
-                buffer_batches=2,
+                approx_batches_in_memory=2,
                 target="b2",
                 validation_split=0.4,
                 shuffle=False,
                 drop_remainder=False,
-                backend="numpy",
             )
 
             results_x_train = [0.0, 0.0, 1.0, 10.0, 2.0, 20.0, 3.0, 30.0, 4.0, 40.0, 5.0, 50.0]
@@ -394,8 +388,8 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             collected_y_train = []
             collected_y_val = []
 
-            iter_train = iter(gen_train)
-            iter_val = iter(gen_validation)
+            iter_train = iter(gen_train.AsNumpy())
+            iter_val = iter(gen_validation.AsNumpy())
 
             for _ in range(self.n_train_batch):
                 x, y = next(iter_train)
@@ -446,12 +440,11 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             gen_train, gen_validation = ROOT.Experimental.ML.RDataLoader(
                 dff,
                 batch_size=3,
-                buffer_batches=2,
+                approx_batches_in_memory=2,
                 target="b2",
                 validation_split=0.4,
                 shuffle=False,
                 drop_remainder=False,
-                backend="numpy",
             )
 
             results_x_train = [0.0, 2.0, 4.0]
@@ -464,8 +457,8 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             collected_y_train = []
             collected_y_val = []
 
-            train_iter = iter(gen_train)
-            val_iter = iter(gen_validation)
+            train_iter = iter(gen_train.AsNumpy())
+            val_iter = iter(gen_validation.AsNumpy())
 
             x, y = next(train_iter)
             self.assertTrue(x.shape == (3, 1))
@@ -513,15 +506,14 @@ class DataLoaderMultipleFiles(unittest.TestCase):
 
             dff = df.Filter("b1 % 2 == 0", "name")
 
-            gen_train = ROOT.Experimental.ML.RDataLoader(
+            gen_train, _ = ROOT.Experimental.ML.RDataLoader(
                 dff,
                 batch_size=3,
-                buffer_batches=2,
+                approx_batches_in_memory=2,
                 target="b2",
                 validation_split=0,
                 shuffle=False,
                 drop_remainder=False,
-                backend="numpy",
             )
 
             results_x_train = [0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0, 16.0, 18.0]
@@ -530,7 +522,7 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             collected_x_train = []
             collected_y_train = []
 
-            train_iter = iter(gen_train)
+            train_iter = iter(gen_train.AsNumpy())
 
             for _ in range(3):
                 x, y = next(train_iter)
@@ -566,12 +558,11 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             gen_train, gen_validation = ROOT.Experimental.ML.RDataLoader(
                 df,
                 batch_size=3,
-                buffer_batches=2,
+                approx_batches_in_memory=2,
                 target="b2",
                 validation_split=0.4,
                 shuffle=False,
                 drop_remainder=False,
-                backend="numpy",
             )
 
             both_epochs_collected_x_val = []
@@ -583,8 +574,8 @@ class DataLoaderMultipleFiles(unittest.TestCase):
                 collected_y_train = []
                 collected_y_val = []
 
-                iter_train = iter(gen_train)
-                iter_val = iter(gen_validation)
+                iter_train = iter(gen_train.AsNumpy())
+                iter_val = iter(gen_validation.AsNumpy())
 
                 for _ in range(self.n_train_batch):
                     x, y = next(iter_train)
@@ -633,21 +624,20 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             gen_train, gen_validation = ROOT.Experimental.ML.RDataLoader(
                 df,
                 batch_size=3,
-                buffer_batches=2,
+                approx_batches_in_memory=2,
                 target="b2",
                 validation_split=0.4,
                 shuffle=False,
                 drop_remainder=False,
-                backend="numpy",
             )
 
             number_of_training_batches = 0
             number_of_validation_batches = 0
 
-            for _ in gen_train:
+            for _ in gen_train.AsNumpy():
                 number_of_training_batches += 1
 
-            for _ in gen_validation:
+            for _ in gen_validation.AsNumpy():
                 number_of_validation_batches += 1
 
             self.assertEqual(gen_train.number_of_batches, number_of_training_batches)
@@ -674,13 +664,12 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             gen_train, gen_validation = ROOT.Experimental.ML.RDataLoader(
                 df,
                 batch_size=3,
-                buffer_batches=2,
+                approx_batches_in_memory=2,
                 target=["b2", "b4"],
                 weights="b3",
                 validation_split=0.4,
                 shuffle=False,
                 drop_remainder=False,
-                backend="torch",
             )
 
             results_x_train = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
@@ -697,8 +686,8 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             collected_z_train = []
             collected_z_val = []
 
-            iter_train = iter(gen_train)
-            iter_val = iter(gen_validation)
+            iter_train = iter(gen_train.AsTorch())
+            iter_val = iter(gen_validation.AsTorch())
 
             for _ in range(self.n_train_batch):
                 x, y, z = next(iter_train)
@@ -759,13 +748,12 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             gen_train, gen_validation = ROOT.Experimental.ML.RDataLoader(
                 df,
                 batch_size=3,
-                buffer_batches=2,
+                approx_batches_in_memory=2,
                 target=["b2", "b4"],
                 weights="b3",
                 validation_split=0.4,
                 shuffle=False,
                 drop_remainder=False,
-                backend="tensorflow",
             )
 
             results_x_train = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
@@ -782,8 +770,8 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             collected_z_train = []
             collected_z_val = []
 
-            iter_train = iter(gen_train)
-            iter_val = iter(gen_validation)
+            iter_train = iter(gen_train.AsTensorFlow())
+            iter_val = iter(gen_validation.AsTensorFlow())
 
             for _ in range(self.n_train_batch):
                 x, y, z = next(iter_train)
@@ -841,7 +829,7 @@ class DataLoaderMultipleFiles(unittest.TestCase):
 
         error_message = (
             f"\n batch_size={batch_size}"
-            f" buffer_batches={buffer_batches}"
+            f" approx_batches_in_memory={buffer_batches}"
             f" entries={entries_in_rdf}"
         )
 
@@ -861,13 +849,12 @@ class DataLoaderMultipleFiles(unittest.TestCase):
                 gen_train, gen_validation = ROOT.Experimental.ML.RDataLoader(
                     df,
                     batch_size=size_of_batch,
-                    buffer_batches=buffer_batches,
+                    approx_batches_in_memory=buffer_batches,
                     target=["b3", "b5"],
                     weights="b2",
                     validation_split=0.3,
                     shuffle=False,
                     drop_remainder=False,
-                    backend="numpy",
                 )
 
                 collect_x = []
@@ -880,8 +867,8 @@ class DataLoaderMultipleFiles(unittest.TestCase):
                     gen_validation.number_of_batches - 1 if val_remainder else gen_validation.number_of_batches
                 )
 
-                iter_train = iter(gen_train)
-                iter_val = iter(gen_validation)
+                iter_train = iter(gen_train.AsNumpy())
+                iter_val = iter(gen_validation.AsNumpy())
 
                 for i in range(n_train_batches):
                     x, y, z = next(iter_train)
@@ -949,13 +936,12 @@ class DataLoaderMultipleFiles(unittest.TestCase):
                 gen_train, gen_validation = ROOT.Experimental.ML.RDataLoader(
                     df,
                     batch_size=3,
-                    buffer_batches=2,
+                    approx_batches_in_memory=2,
                     target="b2",
                     validation_split=0.4,
                     shuffle=True,
                     drop_remainder=False,
                     set_seed=42,
-                    backend="numpy"
                 )
 
                 collected_x_train = []
@@ -963,8 +949,8 @@ class DataLoaderMultipleFiles(unittest.TestCase):
                 collected_y_train = []
                 collected_y_val = []
 
-                iter_train = iter(gen_train)
-                iter_val = iter(gen_validation)
+                iter_train = iter(gen_train.AsNumpy())
+                iter_val = iter(gen_validation.AsNumpy())
 
                 for _ in range(self.n_train_batch):
                     x, y = next(iter_train)
@@ -1013,13 +999,12 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             gen_train, gen_validation = ROOT.Experimental.ML.RDataLoader(
                 df,
                 batch_size=3,
-                buffer_batches=2,
+                approx_batches_in_memory=2,
                 target="b1",
                 validation_split=0.4,
                 max_vec_sizes=max_vec_sizes,
                 shuffle=False,
                 drop_remainder=False,
-                backend="numpy",
             )
 
             results_x_train = [
@@ -1084,8 +1069,8 @@ class DataLoaderMultipleFiles(unittest.TestCase):
             collected_y_train = []
             collected_y_val = []
 
-            train_iter = iter(gen_train)
-            val_iter = iter(gen_validation)
+            train_iter = iter(gen_train.AsNumpy())
+            val_iter = iter(gen_validation.AsNumpy())
 
             for _ in range(self.n_val_batch):
                 x, y = next(val_iter)

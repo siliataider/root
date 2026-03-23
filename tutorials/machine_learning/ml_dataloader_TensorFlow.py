@@ -18,18 +18,16 @@ tree_name = "sig_tree"
 file_name = str(ROOT.gROOT.GetTutorialDir()) + "/machine_learning/data/Higgs_data.root"
 
 batch_size = 128
-chunk_size = 5000
-block_size = 300
+approx_batches_in_memory = 50
 
 rdataframe = ROOT.RDataFrame(tree_name, file_name)
 target = ["Type"]
 
 # Returns two TF.Dataset for training and validation batches.
-ds_train, ds_valid = ROOT.Experimental.ML.CreateTFDatasets(
+ds_train, ds_valid = ROOT.Experimental.ML.RDataLoader(
     rdataframe,
     batch_size,
-    chunk_size,
-    block_size,
+    approx_batches_in_memory,
     target=target,
     validation_split=0.3,
     shuffle=True,
@@ -39,8 +37,8 @@ ds_train, ds_valid = ROOT.Experimental.ML.CreateTFDatasets(
 num_of_epochs = 2
 
 # Datasets have to be repeated as many times as there are epochs
-ds_train_repeated = ds_train.repeat(num_of_epochs)
-ds_valid_repeated = ds_valid.repeat(num_of_epochs)
+ds_train_repeated = ds_train.AsTensorFlow().repeat(num_of_epochs)
+ds_valid_repeated = ds_valid.AsTensorFlow().repeat(num_of_epochs)
 
 # Number of batches per epoch must be given for model.fit
 train_batches_per_epoch = ds_train.number_of_batches

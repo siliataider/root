@@ -1,8 +1,4 @@
-// Author: Dante Niewenhuis, VU Amsterdam 07/2023
-// Author: Kristupas Pranckietis, Vilnius University 05/2024
-// Author: Nopphakorn Subsa-Ard, King Mongkut's University of Technology Thonburi (KMUTT) (TH) 08/2024
-// Author: Vincenzo Eduardo Padulano, CERN 10/2024
-// Author: Martin Føll, University of Oslo (UiO) & CERN 05/2025
+// Author: Silia Taider, CERN 02/2026
 
 /*************************************************************************
  * Copyright (C) 1995-2025, Rene Brun and Fons Rademakers.               *
