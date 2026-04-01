@@ -37,7 +37,10 @@ struct RClusterRange {
    std::size_t rdfIdx;  // which rdf this cluster belongs to
    ULong64_t    start;    // first entry
    ULong64_t    end;      // one-past-last entry
-   std::size_t numEntries() const { return end - start; }
+   std::size_t numEntries{end - start}; // number of entries in the cluster
+
+   std::size_t GetNumEntries() const { return numEntries; }
+   void SetNumEntries(std::size_t num) { numEntries = num; }
 };
    
 /**
@@ -138,6 +141,10 @@ private:
    std::size_t fNumTrainingEntries{0};
    std::size_t fNumValidationEntries{0};
 
+   bool fIsFiltered{false};
+   bool fSplitDiscovered{false};
+   std::size_t fAccumulatedFilteredForTrain{0};
+
 public:
 RClusterLoader(std::vector<ROOT::RDF::RNode> &rdfs,
                const std::vector<std::string> &cols,
@@ -158,6 +165,13 @@ RClusterLoader(std::vector<ROOT::RDF::RNode> &rdfs,
       fSumVecSizes = std::accumulate(fVecSizes.begin(), fVecSizes.end(), 0UL);
       fNumChunkCols = fNumCols + fSumVecSizes - fVecSizes.size();
 
+      for (auto &rdf : fRdfs) {
+         if (!rdf.GetFilterNames().empty()) {
+            fIsFiltered = true;
+            break;
+         }
+      }
+
       fRdfSizes.resize(fRdfs.size(), 0);
 
       // scan cluster boundaries across files
@@ -169,7 +183,7 @@ RClusterLoader(std::vector<ROOT::RDF::RNode> &rdfs,
       }
 
       for (const auto &c : fAllClusters) {
-         auto numEntries = c.numEntries();
+         auto numEntries = c.GetNumEntries();
          fTotalEntries += numEntries;
          fRdfSizes[c.rdfIdx] = numEntries;
       }
@@ -182,12 +196,16 @@ RClusterLoader(std::vector<ROOT::RDF::RNode> &rdfs,
       if (fAllClusters.empty())
          throw std::runtime_error("RClusterLoader::SplitDataset: no clusters found.");
 
+      if (fIsFiltered) {
+         return;
+      }
+
       if (fShuffle) {
          // --- Shuffled path
          // Every cluster contributes a prefix to training and a suffix to validation.
          // Cost: 2x I/O per epoch.
          for (const RClusterRange &c : fAllClusters) {
-            const std::size_t sz = c.numEntries();
+            const std::size_t sz = c.GetNumEntries();
             const std::size_t trainSz = static_cast<std::size_t>((1.0f - fValidationSplit) * sz);
             const std::size_t valSz   = sz - trainSz;
 
@@ -206,7 +224,7 @@ RClusterLoader(std::vector<ROOT::RDF::RNode> &rdfs,
          std::size_t accumulated = 0;
          std::size_t splitIdx    = 0;
          for (std::size_t i = 0; i < fAllClusters.size(); ++i) {
-            const std::size_t sz = fAllClusters[i].numEntries();
+            const std::size_t sz = fAllClusters[i].GetNumEntries();
             if (accumulated + sz <= targetTraining) {
                accumulated += sz;
                splitIdx = i + 1;
@@ -251,10 +269,10 @@ RClusterLoader(std::vector<ROOT::RDF::RNode> &rdfs,
       fNumTrainingEntries = 0;
       fNumValidationEntries = 0;
 
-      for (const auto &c : fTrainingClusters)  fNumTrainingEntries  += c.numEntries();
-      for (const auto &c : fValidationClusters) fNumValidationEntries += c.numEntries();
+      for (const auto &c : fTrainingClusters)  fNumTrainingEntries  += c.GetNumEntries();
+      for (const auto &c : fValidationClusters) fNumValidationEntries += c.GetNumEntries();
 
-      // PrintClusterInfo("After SplitDataset");
+      PrintClusterInfo("After SplitDataset");
    }
 
    //////////////////////////////////////////////////////////////////////////
@@ -266,7 +284,7 @@ RClusterLoader(std::vector<ROOT::RDF::RNode> &rdfs,
       std::mt19937 g(fSetSeed == 0 ? std::random_device{}() : fSetSeed ^ epochIdx);
       std::shuffle(fTrainingClusters.begin(), fTrainingClusters.end(), g);
 
-      // PrintClusterInfo("After ShuffleTrainingClusters");
+      PrintClusterInfo("After ShuffleTrainingClusters");
    }
 
    //////////////////////////////////////////////////////////////////////////
@@ -288,11 +306,121 @@ RClusterLoader(std::vector<ROOT::RDF::RNode> &rdfs,
       ROOT::Internal::RDF::ChangeBeginAndEndEntries(rdf, 0, fRdfSizes[rdfIdx]);
    }
 
-   void LoadTrainingClusterInto(RFlat2DMatrix &dest, std::size_t rdfIdx, ULong64_t startRow, ULong64_t endRow, std::size_t rowOffset = 0)
+   //////////////////////////////////////////////////////////////////////////
+    /// \brief Load one training cluster, returning the number of rows written.
+    ///
+    /// Filtered path, epoch 1 (!fSplitDiscovered):
+    ///   - On the very first call, Count() is called across all RDFs to obtain
+    ///     the total filtered entry count; fNumTrainingEntries and
+    ///     fNumValidationEntries are set as targets immediately.
+    ///   - A single Foreach on the full raw cluster range loads data AND captures
+    ///     rdfentry_ simultaneously.  The real train/val boundary is computed from
+    ///     the accumulated filtered count vs the target, then the train sub-range
+    ///     is pushed to fTrainingClusters and the val sub-range directly to
+    ///     fValidationClusters.
+    ///   - Only the train rows are written into \p dest.
+    ///
+    /// All subsequent epochs (fSplitDiscovered == true): behaves exactly as the
+    /// original LoadClusterInto — no overhead at all.
+    std::size_t LoadTrainingClusterInto(RFlat2DMatrix &dest, std::size_t rdfIdx,
+                                          ULong64_t startRow, ULong64_t endRow,
+                                          std::size_t rowOffset = 0)
    {
+      if (fIsFiltered && !fSplitDiscovered) {
+         // Lazy initialisation: call Count() once to know the global filtered
+         // totals and set the split targets before processing any cluster.
+         if (fAccumulatedFilteredForTrain == 0 && fNumTrainingEntries == 0) {
+            std::size_t totalFiltered = 0;
+            for (auto &rdf : fRdfs)
+               totalFiltered += *rdf.Count();
+            fNumTrainingEntries   = static_cast<std::size_t>(totalFiltered * (1.0f - fValidationSplit));
+            fNumValidationEntries = totalFiltered - fNumTrainingEntries;
+            std::cout << "RClusterLoader: total filtered entries = " << totalFiltered
+                      << ", training target = " << fNumTrainingEntries
+                      << ", validation target = " << fNumValidationEntries
+                      << "\n";
+         }
+
+         ROOT::RDF::RNode &rdf = fRdfs[rdfIdx];
+
+         // Collect raw entry indices that pass the filter.
+         std::vector<ULong64_t> rdfEntries;
+         rdfEntries.reserve(endRow - startRow);
+
+         // Single pass: load data into dest AND capture rdfentry_.
+         RChunkLoaderFunctor<Args...> loader(dest, fNumChunkCols, fVecSizes, fVecPadding, 0, rowOffset);
+         ROOT::Internal::RDF::ChangeBeginAndEndEntries(rdf, startRow, endRow);
+
+         std::vector<std::string> colsWithEntry;
+         colsWithEntry.reserve(fCols.size() + 1);
+         colsWithEntry.push_back("rdfentry_");
+         colsWithEntry.insert(colsWithEntry.end(), fCols.begin(), fCols.end());
+
+         std::cout << "RClusterLoader cols: ";
+         for (const auto &c : fCols) {
+            std::cout << c << " ";
+         }
+
+         std::cout << "RClusterLoader colsWithEntry: ";
+         for (const auto &c : colsWithEntry) {
+            std::cout << c << " ";
+         }
+
+         rdf.Foreach([&](ULong64_t entry, const Args &...cols) {
+            rdfEntries.push_back(entry);
+            loader(cols...);
+         }, colsWithEntry);
+         ROOT::Internal::RDF::ChangeBeginAndEndEntries(rdf, 0, fRdfSizes[rdfIdx]);
+
+         std::cout << "RClusterLoader: rdfentries values for cluster [" << rdfIdx << ":" << startRow << ", " << endRow
+                   << ")  raw_count = " << endRow - startRow
+                   << ", filtered_count = " << rdfEntries.size()
+                   << "\n";
+         for (const auto &e : rdfEntries) {
+            std::cout << e << " ";
+         }
+
+         std::sort(rdfEntries.begin(), rdfEntries.end());
+
+         const std::size_t totalFiltered = rdfEntries.size();
+         if (totalFiltered == 0) {
+            return 0;
+         }
+
+         const std::size_t trainRemaining = fNumTrainingEntries - fAccumulatedFilteredForTrain;
+         const std::size_t trainCount = std::min(static_cast<std::size_t>(totalFiltered * (1.0f - fValidationSplit)), trainRemaining);
+         const std::size_t valCount = totalFiltered - trainCount;
+
+         // boundary: the raw entry index of the first entry NOT assigned to train.
+         // Future epochs call ChangeBeginAndEndEntries(startRow, boundary) — stable
+         // because the same filter always produces the same ordered entries.
+         const ULong64_t boundary = (valCount > 0) ? rdfEntries[trainCount] : endRow;
+
+         if (trainCount > 0)
+            fTrainingClusters.push_back({rdfIdx, startRow, boundary, trainCount});
+         if (valCount > 0)
+            fValidationClusters.push_back({rdfIdx, boundary, endRow, valCount});
+
+         fAccumulatedFilteredForTrain += trainCount;
+
+         std::cout << "RClusterLoader: cluster [" << rdfIdx << ":" << startRow << ", " << endRow
+                   << ")  raw_count = " << endRow - startRow
+                   << ", filtered_count = " << totalFiltered
+                   << ", train_count = " << trainCount
+                   << ", val_count = " << valCount
+                   << ", accumulated_for_train = " << fAccumulatedFilteredForTrain
+                   << "\n";
+
+         return trainCount;
+      }
       LoadClusterInto(dest, rdfIdx, startRow, endRow, rowOffset);
+      return endRow - startRow;
    }
 
+   void FinaliseSplitDiscovery() { if (fIsFiltered) fSplitDiscovered = true; }
+
+   bool IsSplitDiscovered() const { return !fIsFiltered || fSplitDiscovered; }
+    
    void LoadValidationClusterInto(RFlat2DMatrix &dest, std::size_t rdfIdx, ULong64_t startRow, ULong64_t endRow, std::size_t rowOffset = 0)
    {
       LoadClusterInto(dest, rdfIdx, startRow, endRow, rowOffset);
@@ -304,10 +432,16 @@ RClusterLoader(std::vector<ROOT::RDF::RNode> &rdfs,
    std::size_t GetNumValidationEntries() const { return fNumValidationEntries; }
    std::size_t GetNumChunkCols() const { return fNumChunkCols; }
 
-   const std::vector<RClusterRange>& GetTrainingClusters() const { return fTrainingClusters; }
+   const std::vector<RClusterRange>& GetTrainingClusters() const
+   {
+      return (fIsFiltered && !fSplitDiscovered) ? fAllClusters : fTrainingClusters;
+   }
    const std::vector<RClusterRange>& GetValidationClusters() const { return fValidationClusters; }
    
-   std::size_t GetNumTrainingClusters() const { return fTrainingClusters.size(); }
+   std::size_t GetNumTrainingClusters() const
+   {
+      return (fIsFiltered && !fSplitDiscovered) ? fAllClusters.size() : fTrainingClusters.size();
+   }
    std::size_t GetNumValidationClusters() const { return fValidationClusters.size(); }
 
    std::size_t GetNmTotalClusters() const { return fAllClusters.size(); }
@@ -323,7 +457,7 @@ RClusterLoader(std::vector<ROOT::RDF::RNode> &rdfs,
       std::cout << "Total clusters : " << fAllClusters.size()
                << "  (entries: ";
       std::size_t total = 0;
-      for (const auto &c : fAllClusters) total += c.end - c.start;
+      for (const auto &c : fAllClusters) total += c.GetNumEntries();
       std::cout << total << ")\n";
 
       std::cout << "Training clusters  : " << fTrainingClusters.size()
@@ -332,7 +466,7 @@ RClusterLoader(std::vector<ROOT::RDF::RNode> &rdfs,
          const auto &c = fTrainingClusters[i];
          std::cout << "  [" << i << "] rdf=" << c.rdfIdx
                   << "  entries=[" << c.start << ", " << c.end << ")"
-                  << "  size=" << (c.end - c.start) << "\n";
+                  << "  size=" << (c.GetNumEntries()) << "\n";
       }
 
       std::cout << "Validation clusters: " << fValidationClusters.size()
@@ -341,7 +475,7 @@ RClusterLoader(std::vector<ROOT::RDF::RNode> &rdfs,
          const auto &c = fValidationClusters[i];
          std::cout << "  [" << i << "] rdf=" << c.rdfIdx
                   << "  entries=[" << c.start << ", " << c.end << ")"
-                  << "  size=" << (c.end - c.start) << "\n";
+                  << "  size=" << (c.GetNumEntries()) << "\n";
       }
       std::cout << std::flush;
    }

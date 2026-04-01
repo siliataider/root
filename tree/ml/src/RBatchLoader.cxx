@@ -229,4 +229,30 @@ void RBatchLoader::CreateBatches(RFlat2DMatrix &chunkTensor, bool isLastBatch)
    fCV.notify_all();
 }
 
+void RBatchLoader::UpdateNumEntries(std::size_t numEntries)
+{
+   std::cout << "RBatchLoader: Updating number of entries to " << numEntries << "\n";
+   fNumEntries = numEntries;
+
+   if (fBatchSize == 0)
+      fBatchSize = fNumEntries;
+
+   fLeftoverBatchSize = fNumEntries % fBatchSize;
+   fNumFullBatches = fNumEntries / fBatchSize;
+
+   std::size_t numLeftoverBatches = fLeftoverBatchSize == 0 ? 0 : 1;
+
+   if (fDropRemainder) {
+      std::cout << "RBatchLoader: Drop remainder is true. Leftover batch size is " << fLeftoverBatchSize
+                << ". Number of full batches is " << fNumFullBatches << ". Number of batches is " << fNumFullBatches
+                << "\n";
+      fNumBatches = fNumFullBatches;
+   } else {
+      std::cout << "RBatchLoader: Drop remainder is false. Leftover batch size is " << fLeftoverBatchSize
+                << ". Number of full batches is " << fNumFullBatches << ". Number of batches is " << (fNumFullBatches + numLeftoverBatches)
+                << "\n";
+      fNumBatches = fNumFullBatches + numLeftoverBatches;
+   }
+}
+
 } // namespace ROOT::Experimental::Internal::ML

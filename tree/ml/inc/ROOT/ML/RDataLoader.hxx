@@ -346,11 +346,15 @@ public:
                // Accumulate clusters to load, enough to fill the buffer, or until we run out of clusters
                std::vector<RClusterRange> trainClustersToLoad;
                auto accumulatedEntries = 0;
-               while (fTrainingClusterIdx < numTrainingClusters && accumulatedEntries < fBufferCapacity) {
+               const bool discovering = !fClusterLoader->IsSplitDiscovered();
+               while (fTrainingClusterIdx < numTrainingClusters && accumulatedEntries < fBufferCapacity
+                     && (!discovering || trainClustersToLoad.empty())) {
                   const auto& cluster = fClusterLoader->GetTrainingClusters()[fTrainingClusterIdx++];
                   trainClustersToLoad.push_back(cluster);
-                  accumulatedEntries += cluster.numEntries();
+                  accumulatedEntries += cluster.GetNumEntries();
                }
+
+               std::cout << "!! clusters to load: " << trainClustersToLoad.size() << " with total entries: " << accumulatedEntries << "\n";
 
                const bool isLastBuffer = (fTrainingClusterIdx >= numTrainingClusters);
 
@@ -362,9 +366,27 @@ public:
                RFlat2DMatrix stagingBuffer;
                std::size_t rowOffset = 0;
                stagingBuffer.ExtendRows(accumulatedEntries, fClusterLoader->GetNumChunkCols());
-               for (const auto& cluster : trainClustersToLoad) {
-                  fClusterLoader->LoadTrainingClusterInto(stagingBuffer, cluster.rdfIdx, cluster.start, cluster.end, rowOffset);
-                  rowOffset += cluster.numEntries();
+
+               for (auto& cluster : trainClustersToLoad) {
+                  auto loadedEntries = fClusterLoader->LoadTrainingClusterInto(stagingBuffer, cluster.rdfIdx, cluster.start, cluster.end, rowOffset);
+                  if (discovering) {
+                     // For the first epoch, we might discover that the cluster has fewer entries than expected because of filters
+                     cluster.SetNumEntries(loadedEntries);
+                  }
+                  rowOffset += cluster.GetNumEntries();
+               }
+
+               if (discovering && fNumTrainingEntries == 0 && fClusterLoader->GetNumTrainingEntries() > 0) {
+                  fNumTrainingEntries   = fClusterLoader->GetNumTrainingEntries();
+                  fNumValidationEntries = fClusterLoader->GetNumValidationEntries();
+                  fTrainingBatchLoader->UpdateNumEntries(fNumTrainingEntries);
+                  fValidationBatchLoader->UpdateNumEntries(fNumValidationEntries);
+               }
+
+               if (rowOffset < static_cast<std::size_t>(accumulatedEntries)) {
+                  std::cout << "!! Warning: loaded entries (" << rowOffset << ") less than expected (" << accumulatedEntries
+                            << ") for training clusters. resize staging buffer accordingly.\n";
+                  stagingBuffer.Resize(rowOffset, stagingBuffer.GetCols());
                }
 
                RFlat2DMatrix shuffledStagingBuffer;
@@ -372,6 +394,17 @@ public:
                fTrainingBatchLoader->CreateBatches(shuffledStagingBuffer, isLastBuffer);
    
                lock.lock();
+
+               if (isLastBuffer && !fClusterLoader->IsSplitDiscovered()) {
+                  fClusterLoader->FinaliseSplitDiscovery();
+                  fNumTrainingEntries   = fClusterLoader->GetNumTrainingEntries();
+                  fNumValidationEntries = fClusterLoader->GetNumValidationEntries();
+                  fValidationBatchLoader = std::make_unique<RBatchLoader>(
+                     fBatchSize, fCols, fLoadingMutex, fLoadingCondition,
+                     fVecSizes, fNumValidationEntries, fDropRemainder);
+                  std::cout << "!! Finalised split discovery. Total training entries: " << fNumTrainingEntries
+                            << ", total validation entries: " << fNumValidationEntries;
+               }
             }
          }
 
@@ -403,7 +436,7 @@ public:
                while (fValidationClusterIdx < numValidationClusters && accumulatedEntries < fBufferCapacity) {
                   const auto& cluster = fClusterLoader->GetValidationClusters()[fValidationClusterIdx++];
                   valClustersToLoad.push_back(cluster);
-                  accumulatedEntries += cluster.numEntries();
+                  accumulatedEntries += cluster.GetNumEntries();
                }
 
                const bool isLastBuffer = (fValidationClusterIdx >= numValidationClusters);
@@ -415,7 +448,7 @@ public:
                stagingBuffer.ExtendRows(accumulatedEntries, fClusterLoader->GetNumChunkCols());
                for (const auto& cluster : valClustersToLoad) {
                   fClusterLoader->LoadValidationClusterInto(stagingBuffer, cluster.rdfIdx, cluster.start, cluster.end, rowOffset);
-                  rowOffset += cluster.numEntries();
+                  rowOffset += cluster.GetNumEntries();
                }
 
                RFlat2DMatrix shuffledStagingBuffer;
