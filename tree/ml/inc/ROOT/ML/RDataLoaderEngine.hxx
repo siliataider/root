@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "ROOT/ML/RBatchLoader.hxx"
+#include "ROOT/ML/RBatchSink.hxx"
 #include "ROOT/ML/RClusterLoader.hxx"
 #include "ROOT/ML/RDatasetLoader.hxx"
 #include "ROOT/ML/RFlat2DMatrix.hxx"
@@ -220,6 +221,47 @@ public:
       }
 
       fLoadingThread = std::make_unique<std::thread>(&RDataLoaderEngine::LoadData, this);
+   }
+
+   /// \brief Materialize one split to disk by draining a full epoch through the normal batch
+   /// pipeline and Fill() each batch into \p filename instead of yielding it.
+   /// \param colNames Original (pre-expansion) column names.
+   /// \param colWidths Width in tensor columns of each entry in \p colNames (1 for scalars, the
+   /// vector's max size otherwise).
+   void Save(std::string_view treename, std::string_view filename, bool isTraining,
+             const std::vector<std::string> &colNames, const std::vector<std::size_t> &colWidths,
+             ROOT::RDF::ESnapshotOutputFormat outputFormat)
+   {
+      {
+         std::lock_guard<std::mutex> lock(fLoadingMutex);
+         if (isTraining ? fTrainingEpochActive : fValidationEpochActive)
+            throw std::runtime_error("RDataLoaderEngine::Save: this dataset is already being iterated elsewhere "
+                                     "(e.g. inside a training loop). Finish or stop that iteration before saving.");
+      }
+
+      Activate();
+      if (isTraining) {
+         ActivateTrainingEpoch();
+         CreateTrainBatches();
+      } else {
+         ActivateValidationEpoch();
+         CreateValidationBatches();
+      }
+
+      auto sink = CreateBatchSink(treename, filename, colNames, colWidths, outputFormat);
+
+      while (true) {
+         RFlat2DMatrix batch = isTraining ? GetTrainBatch() : GetValidationBatch();
+         if (batch.GetSize() == 0)
+            break;
+         sink->FillBatch(batch);
+      }
+      // sink destructor commits/closes the output file here
+
+      if (isTraining)
+         DeActivateTrainingEpoch();
+      else
+         DeActivateValidationEpoch();
    }
 
    /// \brief Activate the training epoch by starting the batchloader.

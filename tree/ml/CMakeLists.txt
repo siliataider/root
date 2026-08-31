@@ -6,6 +6,7 @@ ROOT_STANDARD_LIBRARY_PACKAGE(ROOTMLDataLoader
   HEADERS
     ROOT/ML/RDataLoaderEngine.hxx
     ROOT/ML/RBatchLoader.hxx
+    ROOT/ML/RBatchSink.hxx
     ROOT/ML/RClusterLoader.hxx
     ROOT/ML/RFlat2DMatrix.hxx
     ROOT/ML/RFlat2DMatrixOperators.hxx
@@ -17,4 +18,5 @@ ROOT_STANDARD_LIBRARY_PACKAGE(ROOTMLDataLoader
     src/RSampler.cxx
   DEPENDENCIES
     ROOTDataFrame
+    ROOTNTuple
 )

@@ -19,6 +19,8 @@ import atexit
 from typing import TYPE_CHECKING, Any, Callable, Tuple
 
 if TYPE_CHECKING:
+    import os
+
     import numpy as np
     import tensorflow as tf
     import torch
@@ -85,6 +87,9 @@ class _RDataLoader:
 
         self.given_columns = []
         self.all_columns = []
+        # width (in expanded tensor columns) of each given_columns entry, 1 for scalars.
+        # Lets save() group expanded columns back under their original name.
+        self.column_widths = []
 
         max_vec_sizes_list = []
         num_feature_expanded = 0
@@ -113,6 +118,8 @@ class _RDataLoader:
             else:
                 self.all_columns.append(name_str)
                 n_added = 1
+
+            self.column_widths.append(n_added)
 
             if i < len(columns):
                 num_feature_expanded += n_added
@@ -494,6 +501,10 @@ class _RDataLoader:
         batch = self.engine.GetValidationBatch()
         return batch if (batch and batch.GetSize() > 0) else None
 
+    def Save(self, treename: str, filename: str, is_training: bool, output_format: ROOT.RDF.ESnapshotOutputFormat) -> None:
+        """Drain one full epoch (same pipeline as training) into a TTree/RNTuple instead of yielding batches."""
+        self.engine.Save(treename, filename, is_training, self.given_columns, self.column_widths, output_format)
+
 
 # context managers for the loading thread
 class _TrainingEpochContext:
@@ -696,7 +707,8 @@ class RDataLoader:
         self._test_size = test_size
 
     def train_test_split(self, test_size: float = 0.2) -> Tuple[RDataLoader, RDataLoader]:
-        """
+        r"""
+        \ingroup Py_ML
         Partition the dataset into training and validation splits.
         Returns two RDataLoader instances that share the same underlying C++
         backend and can each be iterated independently.
@@ -709,6 +721,32 @@ class RDataLoader:
             RDataLoader._from_internal(self._internal, is_training=True),
             RDataLoader._from_internal(self._internal, is_training=False),
         )
+
+    def save(self, treename: str, filename: str | os.PathLike, *, output_format: str = "ttree") -> None:
+        r"""
+        \ingroup Py_ML
+        Write this split to disk exactly as it would be batched for training: 
+        same shuffle/batch_size/drop_remainder configuration. Columns are written under their
+        original names -- a vector column stays one column (now a fixed-size, padded, float
+        vector instead of its original jagged type).
+
+        Args:
+            treename: Name of the output TTree (or RNTuple).
+            filename: Output file path.
+            output_format: ``"ttree"`` (default) or ``"rntuple"``.
+        """
+        if output_format not in ("ttree", "rntuple"):
+            raise ValueError(f"output_format must be 'ttree' or 'rntuple', got {output_format!r}")
+
+        import ROOT
+
+        self._ensure_created()
+        fmt = (
+            ROOT.RDF.ESnapshotOutputFormat.kRNTuple
+            if output_format == "rntuple"
+            else ROOT.RDF.ESnapshotOutputFormat.kTTree
+        )
+        return self._internal.Save(treename, str(filename), self._is_training, fmt)
 
     def as_numpy(self) -> FormattedLoader:
         r"""
