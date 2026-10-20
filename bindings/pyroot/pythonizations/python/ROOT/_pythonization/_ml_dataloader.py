@@ -16,11 +16,10 @@
 from __future__ import annotations
 
 import atexit
+import os
 from typing import TYPE_CHECKING, Any, Callable, Tuple
 
 if TYPE_CHECKING:
-    import os
-
     import numpy as np
     import tensorflow as tf
     import torch
@@ -42,6 +41,23 @@ def _exclude_target_and_weights(columns: list[str], target_columns: list[str], w
     """Drop any target/weights column names that also appear in `columns`."""
     excluded = set(target_columns) | ({weights_column} if weights_column else set())
     return [str(f) for f in columns if str(f) not in excluded]
+
+
+def _open_files(inputs: list, dataset_name: str | None) -> list:
+    """If `inputs` are file paths, replace them by a single RDataFrame reading `dataset_name` from all of them."""
+    paths = [i for i in inputs if isinstance(i, (str, os.PathLike))]
+    if not paths:
+        if dataset_name is not None:
+            raise ValueError("dataset_name can only be used when file paths are given instead of RDataFrames")
+        return inputs
+    if len(paths) != len(inputs):
+        raise TypeError("Either file paths or RDataFrames can be given, not a mix of both")
+    if dataset_name is None:
+        raise ValueError("dataset_name is required when file paths are given instead of RDataFrames")
+
+    import ROOT
+
+    return [ROOT.RDataFrame(dataset_name, [os.fspath(p) for p in paths])]
 
 
 class _RDataLoader:
@@ -125,7 +141,7 @@ class _RDataLoader:
 
     def __init__(
         self,
-        rdataframes: ROOT.RDF.RNode | list[ROOT.RDF.RNode] | None = None,
+        rdataframes: ROOT.RDF.RNode | str | os.PathLike | list[ROOT.RDF.RNode | str | os.PathLike] | None = None,
         batch_size: int = 0,
         batches_in_memory: int = 1,
         columns: list[str] | None = None,
@@ -141,12 +157,14 @@ class _RDataLoader:
         sampling_type: str = "",
         sampling_ratio: float = 1.0,
         replacement: bool = False,
+        dataset_name: str | None = None,
     ) -> None:
         """Wrapper around the C++ DataLoader
 
         Args:
-            rdataframes (ROOT.RDF.RNode | list[ROOT.RDF.RNode] | None):
-                RDataFrame or list of RDataFrames to load from.
+            rdataframes (ROOT.RDF.RNode | str | os.PathLike | list[ROOT.RDF.RNode | str | os.PathLike] | None):
+                RDataFrame or list of RDataFrames to load from, or a file path or list of file paths.
+                File paths are read as a single RDataFrame of the dataset ``dataset_name``.
             batch_size (int):
                 Number of entries per batch returned by the generator.
             batches_in_memory (int):
@@ -195,6 +213,9 @@ class _RDataLoader:
             replacement (bool):
                 Whether the sampling is with (True) or without (False) replacement.
                 Requires ``load_eager=True`` and ``sampling_type="undersampling"``. Defaults to False.
+            dataset_name (str | None):
+                Name of the TTree or RNTuple to read when ``rdataframes`` are file paths.
+                Required in that case, and not allowed otherwise. Defaults to None.
         """
 
         from ROOT import RDF
@@ -202,8 +223,9 @@ class _RDataLoader:
         if rdataframes is None:
             rdataframes = []
 
-        if not hasattr(rdataframes, "__iter__"):
+        if isinstance(rdataframes, (str, os.PathLike)) or not hasattr(rdataframes, "__iter__"):
             rdataframes = [rdataframes]
+        rdataframes = _open_files(list(rdataframes), dataset_name)
         self.noded_rdfs = [RDF.AsRNode(rdf) for rdf in rdataframes]
 
         self.target_columns = _normalize_target(target)
@@ -582,7 +604,7 @@ class RDataLoader:
 
     def __init__(
         self,
-        rdataframes: ROOT.RDF.RNode | list[ROOT.RDF.RNode],
+        rdataframes: ROOT.RDF.RNode | str | os.PathLike | list[ROOT.RDF.RNode | str | os.PathLike],
         batch_size: int = 64,
         batches_in_memory: int = 10,
         columns: list[str] | None = None,
@@ -597,13 +619,15 @@ class RDataLoader:
         sampling_type: str = "",
         sampling_ratio: float = 1.0,
         replacement: bool = False,
+        dataset_name: str | None = None,
     ) -> None:
         r"""
         \ingroup Py_ML
 
         Args:
             rdataframes:
-                RDataFrame or list of RDataFrames to load from.
+                RDataFrame or list of RDataFrames to load from, or a file path or list of file paths.
+                File paths are read as a single RDataFrame of the dataset dataset_name.
             batch_size:
                 Number of entries per batch.
             batches_in_memory:
@@ -641,6 +665,9 @@ class RDataLoader:
             replacement:
                 Whether undersampling is with replacement. Requires load_eager=True
                 and sampling_type="undersampling".
+            dataset_name:
+                Name of the TTree or RNTuple to read when rdataframes are file paths.
+                Required in that case, and not allowed otherwise.
         """
         # Store all constructor parameters. The C++ backend (_RDataLoader) is
         # created lazily on the first call to as_torch/as_numpy/as_tensorflow or
@@ -661,6 +688,7 @@ class RDataLoader:
             sampling_type=sampling_type,  # TODO(staider) consider turning into an enum
             sampling_ratio=sampling_ratio,
             replacement=replacement,
+            dataset_name=dataset_name,
         )
         self._internal: _RDataLoader | None = None
         self._test_size: float | None = None
